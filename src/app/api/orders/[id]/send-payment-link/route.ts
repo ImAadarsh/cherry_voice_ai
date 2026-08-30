@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { ok, fail, readJson } from "@/lib/http";
 import { requireRestaurantId } from "@/lib/route-auth";
+import { customerOrderPageUrl } from "@/lib/customer-page-token";
+import { env } from "@/lib/env";
+import { ensureOrderCustomerToken } from "@/lib/repositories/customer-pages";
 import { sendPaymentLinkForOrder } from "@/lib/services/payment-links";
 
 export const runtime = "nodejs";
@@ -29,19 +32,24 @@ export async function POST(req: Request, { params }: { params: { id: string } })
   if (!parsed.success) return fail("Invalid payload", 422, { issues: parsed.error.issues });
 
   try {
-    const channels = parsed.data.channels?.filter(
-      (c): c is "sms" | "email" => c === "sms" || c === "email",
-    );
     const { link, sends } = await sendPaymentLinkForOrder(restaurantId, orderId, {
       provider: parsed.data.provider,
-      channels,
+      channels: parsed.data.channels,
       phoneOverride: parsed.data.phone,
       emailOverride: parsed.data.email,
     });
 
+    const pageToken = await ensureOrderCustomerToken(orderId);
+    const customerPageUrl = customerOrderPageUrl(pageToken, env.APP_BASE_URL);
+
     return ok({
       order_id: orderId,
-      payment: { url: link.url, provider: link.provider, providerLinkId: link.providerLinkId },
+      customer_page_url: customerPageUrl,
+      payment: {
+        url: link.url,
+        provider: link.provider,
+        providerLinkId: link.providerLinkId,
+      },
       sends,
     });
   } catch (err) {

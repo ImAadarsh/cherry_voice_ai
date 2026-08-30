@@ -282,11 +282,13 @@ export async function handleSendPaymentLink(restaurantId: number, body: unknown)
       channels: parsed.data.channels,
     });
     const pageToken = await ensureOrderCustomerToken(parsed.data.order_id);
+    const customerPageUrl = customerOrderPageUrl(pageToken, env.APP_BASE_URL);
     return {
       status: 200 as const,
       body: {
-        payment_link: link.url,
-        customer_page_url: customerOrderPageUrl(pageToken, env.APP_BASE_URL),
+        customer_page_url: customerPageUrl,
+        payment_link: customerPageUrl,
+        razorpay_url: link.url,
         provider: link.provider,
         sends,
       },

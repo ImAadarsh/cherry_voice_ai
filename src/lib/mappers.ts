@@ -78,6 +78,7 @@ export function mapOrderRow(
     agentId: row.agent_id ? String(row.agent_id) : undefined,
     callId: row.call_log_id ? String(row.call_log_id) : undefined,
     notes: row.notes ? String(row.notes) : undefined,
+    customerPageToken: row.customer_page_token ? String(row.customer_page_token) : undefined,
   };
 }
 

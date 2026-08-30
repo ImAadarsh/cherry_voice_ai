@@ -1,5 +1,5 @@
 import { ok, fail } from "@/lib/http";
-import { createPaymentLinkForOrder } from "@/lib/services/payment-links";
+import { getOrCreatePaymentLinkForOrder } from "@/lib/services/payment-links";
 import { getPublicOrderByToken } from "@/lib/repositories/customer-pages";
 
 export const runtime = "nodejs";
@@ -23,8 +23,8 @@ export async function POST(
   if (order.total_amount <= 0) return fail("Nothing to pay", 422);
 
   try {
-    const link = await createPaymentLinkForOrder(order.restaurant_id, order.id);
-    return ok({ paymentLinkUrl: link.url, provider: link.provider });
+    const link = await getOrCreatePaymentLinkForOrder(order.restaurant_id, order.id);
+    return ok({ paymentLinkUrl: link.url, provider: link.provider, reused: link.reused });
   } catch (err) {
     return fail((err as Error).message, 502);
   }

@@ -12,6 +12,7 @@ import {
   XCircle,
   Bot,
   MessageCircle,
+  Copy,
 } from "lucide-react";
 import {
   Sheet,
@@ -94,12 +95,26 @@ export function OrderDetail({
       );
       const ok = res.sends?.every((s) => s.status !== "failed");
       toast[ok ? "success" : "warning"](ok ? "Payment link sent" : "Link created with warnings", {
-        description: `Sent to ${order.customerName} via ${channels.join(" + ")}`,
+        description: `Customer page link sent to ${order.customerName} via ${channels.join(" + ")}`,
       });
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setSending(false);
+    }
+  };
+
+  const copyCustomerPageLink = async () => {
+    if (!order.customerPageToken) {
+      toast.error("No customer page link for this order");
+      return;
+    }
+    const url = `${window.location.origin}/order/${order.customerPageToken}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast.success("Link copied");
+    } catch {
+      toast.error("Could not copy link");
     }
   };
 
@@ -231,7 +246,14 @@ export function OrderDetail({
         </div>
 
         <div className="safe-bottom sticky bottom-0 space-y-2 border-t glass p-4">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
+            <Button
+              variant="outline"
+              disabled={!order.customerPageToken}
+              onClick={() => void copyCustomerPageLink()}
+            >
+              <Copy className="h-4 w-4" /> Copy link
+            </Button>
             <Button
               variant="outline"
               disabled={sending || order.paymentStatus === "paid"}

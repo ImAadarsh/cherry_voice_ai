@@ -114,6 +114,18 @@ export async function reconcilePayment(input: {
   return { paymentId: null, orderId: input.orderId ?? null };
 }
 
+/** Latest active hosted payment link for an order (not yet paid). */
+export async function getActivePaymentLinkForOrder(orderId: number) {
+  return queryOne<{ payment_link_url: string; provider: PaymentProvider }>(
+    `SELECT payment_link_url, provider FROM payments
+      WHERE order_id = ?
+        AND payment_link_url IS NOT NULL
+        AND status IN ('link_sent', 'pending', 'processing')
+      ORDER BY id DESC LIMIT 1`,
+    [orderId],
+  );
+}
+
 export async function listPayments(
   restaurantId: number,
   arg: number | { status?: string; provider?: PaymentProvider; orderId?: number; limit?: number } = {},

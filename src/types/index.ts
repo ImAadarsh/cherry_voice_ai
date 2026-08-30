@@ -37,6 +37,7 @@ export interface Order {
   callId?: string;
   recordingUrl?: string;
   notes?: string;
+  customerPageToken?: string;
 }
 
 export interface Customer {

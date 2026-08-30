@@ -2,6 +2,7 @@ import "server-only";
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { pool, query, queryOne, withTransaction } from "../db";
 import { generateCustomerPageToken } from "../customer-page-token";
+import { resolveOrderCurrency } from "../order-currency";
 import { upsertCustomerByPhone } from "./customers";
 import { notifyStaffNewOrder } from "../services/staff-notifications";
 import type { OrderChannel, OrderType } from "@/types";
@@ -46,9 +47,13 @@ function generateOrderNumber(): string {
  * updates customer aggregates. Returns the new order id.
  */
 export async function createOrder(input: CreateOrderInput): Promise<number> {
-  const currency = input.currency ?? "USD";
-
   const orderId = await withTransaction(async (conn) => {
+    const currency = await resolveOrderCurrency(input.restaurantId, {
+      explicit: input.currency,
+      conn,
+      itemSkus: input.items.map((it) => it.sku),
+      itemNames: input.items.map((it) => it.name),
+    });
     let customerId: number | null = null;
     if (input.customer?.phone) {
       customerId = await upsertCustomerByPhone(
@@ -168,7 +173,7 @@ async function resolveItems(
 
     if ((menuItemId == null || unitPrice == null) && (it.sku || it.name)) {
       const [rows] = await conn.query<RowDataPacket[]>(
-        `SELECT id, name, price FROM menu_items
+        `SELECT id, name, price, currency FROM menu_items
            WHERE restaurant_id = ? AND (sku = ? OR name = ?) LIMIT 1`,
         [restaurantId, it.sku ?? null, it.name],
       );

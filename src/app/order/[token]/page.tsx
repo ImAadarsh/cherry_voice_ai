@@ -111,6 +111,11 @@ function CustomerOrderView() {
   const activeStep = useMemo(() => (order ? stepIndex(order.status) : 0), [order]);
 
   const handlePay = async () => {
+    if (!order) return;
+    if (order.paymentLinkUrl) {
+      window.location.href = order.paymentLinkUrl;
+      return;
+    }
     setPaying(true);
     try {
       const res = await api.post<{ paymentLinkUrl: string }>(

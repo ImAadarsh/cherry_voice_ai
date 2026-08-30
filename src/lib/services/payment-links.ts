@@ -2,9 +2,10 @@ import "server-only";
 import { queryOne } from "../db";
 import { env } from "../env";
 import { customerOrderPageUrl } from "../customer-page-token";
+import { resolvePaymentCurrency } from "../order-currency";
 import { getGatewayForRestaurant } from "../payments";
 import { ensureOrderCustomerToken } from "../repositories/customer-pages";
-import { createPaymentRecord } from "../repositories/payments";
+import { createPaymentRecord, getActivePaymentLinkForOrder } from "../repositories/payments";
 import { sendSms, sendEmail, sendWhatsApp, type NotificationResult } from "../notifications";
 import { formatMoney } from "../money";
 import type { PaymentProvider } from "@/types";
@@ -56,6 +57,8 @@ export async function createPaymentLinkForOrder(
   if (!order) throw new Error(`Order ${orderId} not found`);
   if (order.total_amount <= 0) throw new Error("Order total must be greater than zero");
 
+  const currency = await resolvePaymentCurrency(order.currency, restaurantId);
+
   const chosen = provider ?? (await resolveProvider(restaurantId));
   const gateway = await getGatewayForRestaurant(restaurantId, chosen);
   const pageToken = await ensureOrderCustomerToken(order.id);
@@ -64,7 +67,7 @@ export async function createPaymentLinkForOrder(
   const result = await gateway.createPaymentLink({
     orderId: order.id,
     amount: order.total_amount,
-    currency: order.currency,
+    currency,
     description: `Order payment`,
     customer: {
       name: order.customer_name ?? undefined,
@@ -86,9 +89,32 @@ export async function createPaymentLinkForOrder(
   });
 
   // Reflect link-sent state on the order.
-  await queryOne("UPDATE orders SET payment_status = 'link_sent' WHERE id = ?", [order.id]);
+  await queryOne("UPDATE orders SET payment_status = 'link_sent', currency = ? WHERE id = ?", [
+    currency,
+    order.id,
+  ]);
 
-  return result;
+  return { ...result, currency, customerPageUrl };
+}
+
+/** Return an existing hosted payment URL or create one for the order. */
+export async function getOrCreatePaymentLinkForOrder(
+  restaurantId: number,
+  orderId: number,
+  provider?: PaymentProvider,
+) {
+  const existing = await getActivePaymentLinkForOrder(orderId);
+  if (existing?.payment_link_url) {
+    const pageToken = await ensureOrderCustomerToken(orderId);
+    return {
+      provider: existing.provider as PaymentProvider,
+      url: existing.payment_link_url,
+      customerPageUrl: customerOrderPageUrl(pageToken, env.APP_BASE_URL),
+      reused: true as const,
+    };
+  }
+  const link = await createPaymentLinkForOrder(restaurantId, orderId, provider);
+  return { ...link, reused: false as const };
 }
 
 interface OrderContactRow extends RowDataPacket {

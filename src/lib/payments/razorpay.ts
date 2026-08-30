@@ -54,7 +54,8 @@ export class RazorpayGateway implements PaymentGateway {
         email: input.customer?.email,
         contact: input.customer?.phone,
       },
-      notify: { sms: Boolean(input.customer?.phone), email: Boolean(input.customer?.email) },
+      // Cherry Voice sends the customer order page URL via our own SMS/WhatsApp.
+      notify: { sms: false, email: false },
       callback_url: input.callbackUrl,
       callback_method: input.callbackUrl ? "get" : undefined,
       notes: {

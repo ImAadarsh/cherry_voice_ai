@@ -5,7 +5,9 @@ import { recordWebhook, markWebhook } from "@/lib/repositories/webhooks";
 import { findAgentByOmnidimId, findAgentByPhoneNumber } from "@/lib/repositories/agents";
 import { upsertCallLog } from "@/lib/repositories/calls";
 import { createOrder } from "@/lib/repositories/orders";
-import { createPaymentLinkForOrder } from "@/lib/services/payment-links";
+import { ensureOrderCustomerToken } from "@/lib/repositories/customer-pages";
+import { customerOrderPageUrl } from "@/lib/customer-page-token";
+import { env } from "@/lib/env";
 import type { OmnidimOrderWebhook } from "@/types";
 
 export const runtime = "nodejs";
@@ -17,7 +19,7 @@ export const dynamic = "force-dynamic";
  * Configure Omnidim to POST call/order events here. We verify an optional HMAC
  * signature (OMNIDIM_WEBHOOK_SECRET) over the raw body, log every event for
  * idempotency, and — on an "order.placed" style event — create the order and
- * generate a payment link the agent can read/SMS to the customer.
+ * return the customer order page URL (payment happens from that page).
  *
  * The exact Omnidim payload shape varies by account configuration, so parsing
  * is defensive. Adjust `OmnidimOrderWebhook` in src/types to match your setup.
@@ -135,15 +137,8 @@ export async function POST(req: Request) {
       notes: payload?.order?.notes ?? null,
     });
 
-    // Generate a payment link (best-effort; failure shouldn't drop the order).
-    let paymentLinkUrl: string | null = null;
-    try {
-      const link = await createPaymentLinkForOrder(restaurantId, orderId);
-      paymentLinkUrl = link?.url ?? null;
-    } catch (e) {
-      // eslint-disable-next-line no-console
-      console.error("payment link creation failed:", (e as Error).message);
-    }
+    const pageToken = await ensureOrderCustomerToken(orderId);
+    const customerPageUrl = customerOrderPageUrl(pageToken, env.APP_BASE_URL);
 
     await markWebhook(logged.id, "processed", {
       httpStatus: 200,
@@ -151,7 +146,7 @@ export async function POST(req: Request) {
       relatedCallId: callLogId,
     });
 
-    return ok({ received: true, orderCreated: true, orderId, paymentLinkUrl });
+    return ok({ received: true, orderCreated: true, orderId, customerPageUrl });
   } catch (err) {
     await markWebhook(logged.id, "failed", { errorMessage: (err as Error).message });
     // eslint-disable-next-line no-console
