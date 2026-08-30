@@ -1,6 +1,7 @@
 import "server-only";
 import crypto from "node:crypto";
 import Razorpay from "razorpay";
+import { validatePaymentVerification } from "razorpay/dist/utils/razorpay-utils.js";
 import { env } from "../env";
 import type {
   CreatePaymentLinkInput,
@@ -149,4 +150,48 @@ function safeEqual(a: string, b: string): boolean {
 function numeric(v: unknown): number | undefined {
   const n = Number(v);
   return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+export interface RazorpayPaymentLinkCallback {
+  razorpay_payment_id: string;
+  razorpay_payment_link_id: string;
+  razorpay_payment_link_reference_id?: string;
+  razorpay_payment_link_status: string;
+  razorpay_signature: string;
+}
+
+/** Verify Razorpay Payment Link redirect callback query params (uses API key secret). */
+export function verifyRazorpayPaymentLinkCallback(
+  params: RazorpayPaymentLinkCallback,
+  keySecret: string,
+): boolean {
+  if (!params.razorpay_payment_id || !params.razorpay_payment_link_id || !params.razorpay_signature) {
+    return false;
+  }
+  try {
+    return validatePaymentVerification(
+      {
+        payment_id: params.razorpay_payment_id,
+        payment_link_id: params.razorpay_payment_link_id,
+        payment_link_reference_id: params.razorpay_payment_link_reference_id ?? "",
+        payment_link_status: params.razorpay_payment_link_status,
+      },
+      params.razorpay_signature,
+      keySecret,
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Best-effort order id extraction from a Razorpay webhook body before signature verification. */
+export function extractRazorpayOrderIdFromWebhook(rawBody: string): number | undefined {
+  try {
+    const event = JSON.parse(rawBody);
+    const paymentEntity = event.payload?.payment?.entity;
+    const linkEntity = event.payload?.payment_link?.entity;
+    return numeric(linkEntity?.notes?.order_id ?? paymentEntity?.notes?.order_id);
+  } catch {
+    return undefined;
+  }
 }

@@ -81,6 +81,8 @@ function CustomerOrderView() {
   const [order, setOrder] = useState<OrderPayload | null>(null);
   const [loading, setLoading] = useState(true);
   const [paying, setPaying] = useState(false);
+  const [confirmingPayment, setConfirmingPayment] = useState(false);
+  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
   const [address, setAddress] = useState("");
   const [savingAddress, setSavingAddress] = useState(false);
 
@@ -103,10 +105,47 @@ function CustomerOrderView() {
   }, [load]);
 
   useEffect(() => {
-    if (searchParams.get("paid") === "1") {
-      toast.success("Payment received — thank you!");
-    }
-  }, [searchParams]);
+    const paymentId = searchParams.get("razorpay_payment_id");
+    const signature = searchParams.get("razorpay_signature");
+    const linkStatus = searchParams.get("razorpay_payment_link_status");
+    if (!paymentId || !signature || !linkStatus) return;
+
+    let cancelled = false;
+    const confirm = async () => {
+      setConfirmingPayment(true);
+      try {
+        const res = await api.post<{
+          alreadyPaid: boolean;
+          paymentStatus: string;
+          orderStatus: string;
+        }>(`/api/public/orders/${token}/confirm-payment`, {
+          razorpay_payment_id: paymentId,
+          razorpay_payment_link_id: searchParams.get("razorpay_payment_link_id"),
+          razorpay_payment_link_reference_id:
+            searchParams.get("razorpay_payment_link_reference_id") ?? "",
+          razorpay_payment_link_status: linkStatus,
+          razorpay_signature: signature,
+        });
+        if (cancelled) return;
+        setPaymentConfirmed(true);
+        if (!res.alreadyPaid) {
+          toast.success("Payment received — thank you!");
+        }
+        await load();
+        const cleanUrl = `${window.location.pathname}`;
+        window.history.replaceState({}, "", cleanUrl);
+      } catch (e) {
+        if (!cancelled) toast.error((e as Error).message);
+      } finally {
+        if (!cancelled) setConfirmingPayment(false);
+      }
+    };
+
+    void confirm();
+    return () => {
+      cancelled = true;
+    };
+  }, [searchParams, token, load]);
 
   const activeStep = useMemo(() => (order ? stepIndex(order.status) : 0), [order]);
 
@@ -148,10 +187,13 @@ function CustomerOrderView() {
     }
   };
 
-  if (loading) {
+  if (loading || confirmingPayment) {
     return (
-      <div className="flex min-h-svh items-center justify-center bg-mesh">
+      <div className="flex min-h-svh flex-col items-center justify-center gap-3 bg-mesh">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        {confirmingPayment && (
+          <p className="text-sm text-muted-foreground">Confirming your payment…</p>
+        )}
       </div>
     );
   }
@@ -173,6 +215,20 @@ function CustomerOrderView() {
           <h1 className="font-display text-2xl font-bold">{order.restaurant.name}</h1>
           <p className="text-sm text-muted-foreground">Order {order.orderNumber}</p>
         </div>
+
+        {paymentConfirmed && order.paymentStatus === "paid" && (
+          <Card className="border-emerald-500/30 bg-emerald-500/5">
+            <CardContent className="flex items-center gap-3 py-4">
+              <div className="grid h-10 w-10 place-items-center rounded-full bg-emerald-500/15 text-emerald-600">
+                <Check className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="font-medium text-emerald-700 dark:text-emerald-400">Payment successful</p>
+                <p className="text-sm text-muted-foreground">Your order is confirmed. Download your invoice below.</p>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader className="pb-3">
