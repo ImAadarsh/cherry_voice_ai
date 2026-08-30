@@ -18,10 +18,8 @@ import {
   Pencil,
   Trash2,
   Star,
-  Globe,
   Copy,
   Check,
-  ExternalLink,
   Sparkles,
 } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
@@ -116,7 +114,6 @@ export default function AgentsPage() {
 
   const nativeCount = agents.filter((a) => a.agentType === "native").length;
   const platformCount = agents.filter((a) => a.agentType === "platform").length;
-  const demoUrl = data?.cherry_voice?.demo_url;
   const embedScript = data?.cherry_voice?.embed_script;
 
   const handleDelete = async () => {
@@ -267,21 +264,16 @@ export default function AgentsPage() {
               <Trash2 className="h-4 w-4" /> Clean duplicates
             </Button>
           )}
-          {demoUrl && (
-            <Button size="sm" variant="secondary" className="gap-2 font-semibold" asChild>
-              <a href={demoUrl} target="_blank" rel="noreferrer">
-                <Globe className="h-4 w-4" /> Test Cherry Voice
-              </a>
+          {platformAgents.length > 0 && (
+            <Button
+              size="sm"
+              className="gap-2 font-semibold"
+              onClick={() => setDispatchFor(platformAgents[0] ?? null)}
+              disabled={!platformAgents.length}
+            >
+              <PhoneOutgoing className="h-4 w-4" /> Dispatch call
             </Button>
           )}
-          <Button
-            size="sm"
-            className="gap-2 font-semibold"
-            onClick={() => setDispatchFor(platformAgents[0] ?? null)}
-            disabled={!platformAgents.length}
-          >
-            <PhoneOutgoing className="h-4 w-4" /> Dispatch call
-          </Button>
         </div>
       </PageHeader>
 
@@ -368,7 +360,6 @@ export default function AgentsPage() {
                   <NativeAgentCard
                     key={agent.id}
                     agent={agent}
-                    demoUrl={demoUrl}
                     embedScript={embedScript}
                     voiceLabel={voiceLabel(agent.voice)}
                     onWebCall={() => setCherryWebCallFor(agent)}
@@ -437,9 +428,15 @@ export default function AgentsPage() {
                         </span>
                       </p>
                       <p className="truncate text-xs font-medium text-muted-foreground">
-                        {c.customerPhone} · {formatRelativeTime(c.startedAt)}
+                        {c.source === "cherry_voice" ? c.sessionId ?? c.customerPhone : c.customerPhone} ·{" "}
+                        {formatRelativeTime(c.startedAt)}
                       </p>
                     </div>
+                    {c.source === "cherry_voice" && (
+                      <Badge variant="default" className="shrink-0 text-[10px]">
+                        Cherry Voice
+                      </Badge>
+                    )}
                     <CallOutcomeBadge outcome={c.outcome} />
                     <span className="tabular hidden w-12 text-right text-sm font-medium text-muted-foreground sm:block">
                       {c.duration ? formatDuration(c.duration) : "—"}
@@ -497,7 +494,12 @@ export default function AgentsPage() {
 
       <CherryVoiceWebCallDialog
         open={!!cherryWebCallFor}
-        onOpenChange={(open) => !open && setCherryWebCallFor(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setCherryWebCallFor(null);
+            refetchCalls();
+          }
+        }}
         agentId={cherryWebCallFor?.omnidimAgentId}
         agentName={cherryWebCallFor?.name}
       />
@@ -566,7 +568,6 @@ function AgentNameCell({ agent }: { agent: VoiceAgent }) {
 
 function NativeAgentCard({
   agent,
-  demoUrl,
   embedScript,
   voiceLabel,
   onWebCall,
@@ -577,7 +578,6 @@ function NativeAgentCard({
   copiedEmbed,
 }: {
   agent: VoiceAgent;
-  demoUrl?: string;
   embedScript?: string;
   voiceLabel: string;
   onWebCall: () => void;
@@ -630,13 +630,6 @@ function NativeAgentCard({
           <Button size="sm" className="gap-1.5" onClick={onWebCall}>
             <Mic2 className="h-3.5 w-3.5" /> Web call
           </Button>
-          {demoUrl && (
-            <Button size="sm" variant="secondary" className="gap-1.5" asChild>
-              <a href={demoUrl} target="_blank" rel="noreferrer">
-                <ExternalLink className="h-3.5 w-3.5" /> Test call
-              </a>
-            </Button>
-          )}
           {embedScript && (
             <Button size="sm" variant="outline" className="gap-1.5" onClick={onCopyEmbed}>
               {copiedEmbed ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}

@@ -2,6 +2,12 @@ import "server-only";
 import { INTEGRATION_TOOLS_PROMPT, VOICE_STYLE_PROMPT } from "@/lib/integration-tools";
 import { getAgentContext } from "@/lib/repositories/onboarding";
 import { getRestaurant } from "@/lib/repositories/settings";
+import {
+  finalizeCherryVoiceCallLog,
+  initCherryVoiceCallLog,
+  logCherryVoiceToolCall,
+  logCherryVoiceTranscript,
+} from "./call-log";
 import { createDeepgramSttProvider } from "./providers/deepgram-stt";
 import { createGeminiLlmProvider } from "./providers/gemini-llm";
 import { createInworldTtsProvider } from "./providers/inworld-tts";
@@ -19,10 +25,10 @@ const sttBySession = new Map<string, ReturnType<typeof createDeepgramSttProvider
 const llm = createGeminiLlmProvider();
 const tts = createInworldTtsProvider();
 
-async function buildSystemPrompt(restaurantId: number): Promise<string> {
+async function buildSystemPrompt(session: VoiceSessionRecord): Promise<string> {
   const [restaurant, context] = await Promise.all([
-    getRestaurant(restaurantId),
-    getAgentContext(restaurantId),
+    getRestaurant(session.restaurantId),
+    getAgentContext(session.restaurantId),
   ]);
 
   const parts = [
@@ -32,6 +38,12 @@ async function buildSystemPrompt(restaurantId: number): Promise<string> {
     INTEGRATION_TOOLS_PROMPT,
   ];
 
+  if (session.orderId) {
+    parts.push(
+      `## Active order for this call\nOrder id ${session.orderId} is already placed for this conversation. Use update_order to change name, phone, address, items, or notes — never call create_order again.`,
+    );
+  }
+
   if (context?.generated_prompt) {
     parts.push(`## Restaurant context\n${context.generated_prompt}`);
   }
@@ -40,7 +52,7 @@ async function buildSystemPrompt(restaurantId: number): Promise<string> {
 }
 
 async function runLlmTurn(session: VoiceSessionRecord, userText: string): Promise<string> {
-  const systemPrompt = await buildSystemPrompt(session.restaurantId);
+  const systemPrompt = await buildSystemPrompt(session);
   const messages: LlmMessage[] = [
     ...session.messages.map((m) => ({ role: m.role, content: m.content })),
     { role: "user", content: userText },
@@ -52,10 +64,14 @@ async function runLlmTurn(session: VoiceSessionRecord, userText: string): Promis
   while (turn.toolCalls.length > 0 && guard < 6) {
     guard += 1;
     const toolResults = await Promise.all(
-      turn.toolCalls.map(async (call) => ({
-        name: call.name,
-        result: await executeCherryVoiceTool(session.restaurantId, call.name, call.args),
-      })),
+      turn.toolCalls.map(async (call) => {
+        const result = await executeCherryVoiceTool(session.restaurantId, call.name, call.args, session);
+        await logCherryVoiceToolCall(session, call.name, call.args, result);
+        return {
+          name: call.name,
+          result,
+        };
+      }),
     );
 
     messages.push({
@@ -81,6 +97,7 @@ async function speakResponse(session: VoiceSessionRecord, text: string): Promise
     type: "assistant_text",
     payload: { text },
   });
+  await logCherryVoiceTranscript(session, "assistant", text);
 
   try {
     await tts.synthesize({
@@ -100,6 +117,7 @@ async function speakResponse(session: VoiceSessionRecord, text: string): Promise
     });
   } catch (err) {
     if ((err as Error).name !== "AbortError") {
+      session.failed = true;
       emitSessionEvent(session, {
         type: "error",
         payload: { message: (err as Error).message },
@@ -125,6 +143,7 @@ async function processUtterance(session: VoiceSessionRecord, utterance: string):
     type: "transcript",
     payload: { text, isFinal: true, role: "user" },
   });
+  await logCherryVoiceTranscript(session, "user", text);
 
   try {
     const reply = await runLlmTurn(session, text);
@@ -132,6 +151,7 @@ async function processUtterance(session: VoiceSessionRecord, utterance: string):
     session.messages.push({ role: "model", content: reply });
     await speakResponse(session, reply);
   } catch (err) {
+    session.failed = true;
     emitSessionEvent(session, {
       type: "error",
       payload: { message: (err as Error).message },
@@ -148,6 +168,8 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
   if (!session) throw new Error("Session not found");
 
   if (sttBySession.has(sessionId)) return;
+
+  await initCherryVoiceCallLog(session);
 
   const stt = createDeepgramSttProvider();
   sttBySession.set(sessionId, stt);
@@ -184,6 +206,7 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
   });
 
   stt.onError((err) => {
+    session.failed = true;
     emitSessionEvent(session, { type: "error", payload: { message: err.message } });
   });
 
@@ -201,7 +224,7 @@ export function sendAudioToSession(sessionId: string, chunk: Buffer): void {
   stt?.sendAudio(chunk);
 }
 
-export function stopVoiceOrchestrator(sessionId: string): void {
+export async function stopVoiceOrchestrator(sessionId: string): Promise<void> {
   const stt = sttBySession.get(sessionId);
   stt?.close();
   sttBySession.delete(sessionId);
@@ -210,6 +233,7 @@ export function stopVoiceOrchestrator(sessionId: string): void {
   if (session) {
     interruptSpeech(session);
     setSessionState(session, "ended");
+    await finalizeCherryVoiceCallLog(session);
   }
 }
 

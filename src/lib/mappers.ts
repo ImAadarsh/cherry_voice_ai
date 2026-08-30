@@ -185,23 +185,33 @@ export function mapAgentRow(row: Record<string, unknown>): VoiceAgent {
   };
 }
 
-export function mapCallRow(row: Record<string, unknown>, agentName = "Agent"): CallLog {
+export function mapCallRow(row: Record<string, unknown>): CallLog {
   const status = String(row.status ?? "completed");
+  const source = String(row.source ?? "platform") as CallLog["source"];
   let outcome: CallLog["outcome"] = "inquiry";
   if (status === "no_answer" || status === "busy") outcome = "missed";
-  else if (status === "completed") outcome = "order_placed";
+  else if (status === "completed" || status === "in_progress") outcome = "order_placed";
+
+  const sessionId = row.omnidim_call_id ? String(row.omnidim_call_id) : undefined;
+  const agentName = row.agent_name ? String(row.agent_name) : source === "cherry_voice" ? "Cherry Voice" : "Agent";
 
   return {
     id: String(row.omnidim_call_id ?? row.id),
     agentId: row.agent_id ? String(row.agent_id) : "",
     agentName,
-    customerName: String(row.from_number ?? row.to_number ?? "Unknown"),
-    customerPhone: String(row.from_number ?? row.to_number ?? ""),
+    customerName:
+      source === "cherry_voice"
+        ? sessionId ?? "Web caller"
+        : String(row.from_number ?? row.to_number ?? "Unknown"),
+    customerPhone:
+      source === "cherry_voice" ? sessionId ?? "Web session" : String(row.from_number ?? row.to_number ?? ""),
     outcome,
     duration: Number(row.duration_seconds ?? 0),
     startedAt: String(row.started_at ?? row.created_at ?? new Date().toISOString()),
     recordingUrl: row.recording_url ? String(row.recording_url) : undefined,
     sentiment: "neutral",
+    source,
+    sessionId,
   };
 }
 

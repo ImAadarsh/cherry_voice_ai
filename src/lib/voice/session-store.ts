@@ -1,13 +1,19 @@
 import "server-only";
 import type { VoiceSessionEvent, VoiceSessionState } from "./providers/types";
+import type { ToolCallEntry, TranscriptEntry } from "@/lib/repositories/calls";
 
 export interface VoiceSessionRecord {
   id: string;
   restaurantId: number;
+  agentId: number | null;
   voiceId: string;
   greeting: string | null;
   state: VoiceSessionState;
   messages: Array<{ role: "user" | "model"; content: string }>;
+  transcript: TranscriptEntry[];
+  toolCalls: ToolCallEntry[];
+  callLogId: number | null;
+  orderId: number | null;
   createdAt: number;
   lastActivityAt: number;
   subscribers: Set<(event: VoiceSessionEvent) => void>;
@@ -15,6 +21,7 @@ export interface VoiceSessionRecord {
   processing: boolean;
   pendingUtterance: string;
   isSpeaking: boolean;
+  failed: boolean;
 }
 
 const sessions = new Map<string, VoiceSessionRecord>();
@@ -28,14 +35,21 @@ export function createVoiceSession(input: {
   restaurantId: number;
   voiceId: string;
   greeting: string | null;
+  agentId?: number | null;
+  callLogId?: number | null;
 }): VoiceSessionRecord {
   const session: VoiceSessionRecord = {
     id: createSessionId(),
     restaurantId: input.restaurantId,
+    agentId: input.agentId ?? null,
     voiceId: input.voiceId,
     greeting: input.greeting,
     state: "idle",
     messages: [],
+    transcript: [],
+    toolCalls: [],
+    callLogId: input.callLogId ?? null,
+    orderId: null,
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
     subscribers: new Set(),
@@ -43,6 +57,7 @@ export function createVoiceSession(input: {
     processing: false,
     pendingUtterance: "",
     isSpeaking: false,
+    failed: false,
   };
   sessions.set(session.id, session);
   return session;

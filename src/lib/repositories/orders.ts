@@ -297,6 +297,118 @@ export async function updateOrderStatus(
   return res.affectedRows > 0;
 }
 
+export interface UpdateOrderDetailsInput {
+  restaurantId: number;
+  orderId: number;
+  customer?: {
+    phone?: string;
+    name?: string | null;
+    email?: string | null;
+    address?: string | null;
+  };
+  orderType?: OrderType;
+  items?: NewOrderItemInput[];
+  notes?: string | null;
+}
+
+/** Update a pending voice order (customer details, items, notes). */
+export async function updateOrderDetails(input: UpdateOrderDetailsInput): Promise<boolean> {
+  return withTransaction(async (conn) => {
+    const [orders] = await conn.query<RowDataPacket[]>(
+      "SELECT id, status, customer_id FROM orders WHERE id = ? AND restaurant_id = ? LIMIT 1",
+      [input.orderId, input.restaurantId],
+    );
+    const order = orders[0];
+    if (!order) return false;
+
+    const status = String(order.status);
+    if (!["pending", "draft"].includes(status)) {
+      throw new Error("Only pending orders can be updated during a call");
+    }
+
+    let customerId = order.customer_id as number | null;
+    if (input.customer?.phone) {
+      customerId = await upsertCustomerByPhone(
+        input.restaurantId,
+        {
+          phone: input.customer.phone,
+          name: input.customer.name,
+          email: input.customer.email,
+          address: input.customer.address,
+        },
+        conn,
+      );
+    }
+
+    const sets: string[] = [];
+    const params: unknown[] = [];
+
+    if (customerId != null) {
+      sets.push("customer_id = ?");
+      params.push(customerId);
+    }
+    if (input.customer?.name !== undefined) {
+      sets.push("customer_name = ?");
+      params.push(input.customer.name);
+    }
+    if (input.customer?.phone !== undefined) {
+      sets.push("customer_phone = ?");
+      params.push(input.customer.phone);
+    }
+    if (input.customer?.address !== undefined) {
+      sets.push("delivery_address = ?");
+      params.push(input.customer.address);
+    }
+    if (input.orderType) {
+      sets.push("order_type = ?");
+      params.push(input.orderType);
+    }
+    if (input.notes !== undefined) {
+      sets.push("notes = ?");
+      params.push(input.notes);
+    }
+
+    if (input.items?.length) {
+      const resolved = await resolveItems(conn, input.restaurantId, input.items);
+      const subtotal = resolved.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0);
+      const taxAmount = 0;
+      const total = subtotal + taxAmount;
+
+      await conn.query("DELETE FROM order_items WHERE order_id = ?", [input.orderId]);
+      for (const it of resolved) {
+        await conn.query(
+          `INSERT INTO order_items
+             (order_id, menu_item_id, name, quantity, unit_price, total_price, selected_options, notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            input.orderId,
+            it.menuItemId,
+            it.name,
+            it.quantity,
+            it.unitPrice,
+            it.unitPrice * it.quantity,
+            it.options ? JSON.stringify(it.options) : null,
+            it.notes ?? null,
+          ],
+        );
+      }
+
+      sets.push("subtotal = ?", "tax_amount = ?", "total_amount = ?");
+      params.push(subtotal, taxAmount, Math.max(0, total));
+    }
+
+    if (sets.length > 0) {
+      params.push(input.orderId, input.restaurantId);
+      await conn.query(
+        `UPDATE orders SET ${sets.join(", ")}, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND restaurant_id = ?`,
+        params,
+      );
+    }
+
+    return true;
+  });
+}
+
 /** Update payment status columns after a gateway event. */
 export async function setOrderPaymentStatus(
   orderId: number,

@@ -44,6 +44,7 @@ const createOrderSchema = z
     items: z.union([z.array(z.record(z.string(), z.unknown())), z.string()]).optional(),
     notes: z.string().optional(),
     agent_id: z.union([z.string(), z.number()]).optional(),
+    call_log_id: z.coerce.number().int().positive().optional(),
     speak_first: z.string().optional(),
   })
   .superRefine((data, ctx) => {
@@ -83,6 +84,7 @@ export async function handleCreateOrder(restaurantId: number, body: unknown) {
     channel: "voice",
     orderType: parsed.data.order_type ?? "pickup",
     agentId,
+    callLogId: parsed.data.call_log_id ?? null,
     customer: {
       phone,
       name: parsed.data.name ?? parsed.data.customer_name ?? null,
@@ -115,6 +117,89 @@ export async function handleCreateOrder(restaurantId: number, body: unknown) {
       customer_page_url: customerOrderPageUrl(pageToken, env.APP_BASE_URL),
     },
   };
+}
+
+const updateOrderSchema = z.object({
+  order_id: z.coerce.number().int().positive(),
+  phone: z.string().min(3).optional(),
+  customer_phone: z.string().min(3).optional(),
+  name: z.string().optional(),
+  customer_name: z.string().optional(),
+  email: z.string().optional(),
+  address: z.string().optional(),
+  order_type: z.enum(["pickup", "delivery", "dine_in"]).optional(),
+  items: z.union([z.array(z.record(z.string(), z.unknown())), z.string()]).optional(),
+  notes: z.string().optional(),
+});
+
+export async function handleUpdateOrder(
+  restaurantId: number,
+  body: unknown,
+  opts?: { sessionOrderId?: number | null },
+) {
+  const parsed = updateOrderSchema.safeParse(body ?? {});
+  if (!parsed.success) {
+    return { status: 422 as const, body: { error: "Invalid update payload", issues: parsed.error.issues } };
+  }
+
+  if (opts?.sessionOrderId != null && parsed.data.order_id !== opts.sessionOrderId) {
+    return {
+      status: 403 as const,
+      body: {
+        error: `Only order ${opts.sessionOrderId} from this call can be updated.`,
+      },
+    };
+  }
+
+  const items = parsed.data.items != null ? parseItems(parsed.data.items) : undefined;
+  if (items && items.length === 0) {
+    return { status: 422 as const, body: { error: "At least one item is required when updating items" } };
+  }
+
+  const phoneRaw = parsed.data.phone ?? parsed.data.customer_phone;
+  const phone = phoneRaw ? normalizePhoneInput(phoneRaw) : undefined;
+
+  const { updateOrderDetails } = await import("@/lib/repositories/orders");
+  try {
+    const updated = await updateOrderDetails({
+      restaurantId,
+      orderId: parsed.data.order_id,
+      customer: {
+        phone,
+        name: parsed.data.name ?? parsed.data.customer_name,
+        email: parsed.data.email,
+        address: parsed.data.address,
+      },
+      orderType: parsed.data.order_type,
+      items,
+      notes: parsed.data.notes,
+    });
+
+    if (!updated) {
+      return { status: 404 as const, body: { error: "Order not found or cannot be updated" } };
+    }
+
+    const order = await getOrder(restaurantId, parsed.data.order_id);
+    const row = order as Record<string, unknown> | null;
+    const pageToken =
+      (row?.customer_page_token as string | undefined) ??
+      (await ensureOrderCustomerToken(parsed.data.order_id));
+
+    return {
+      status: 200 as const,
+      body: {
+        order_id: parsed.data.order_id,
+        order_number: row?.order_number ?? null,
+        total_amount: row?.total_amount ?? null,
+        currency: row?.currency ?? null,
+        status: row?.status ?? "pending",
+        customer_page_token: pageToken,
+        customer_page_url: customerOrderPageUrl(pageToken, env.APP_BASE_URL),
+      },
+    };
+  } catch (err) {
+    return { status: 422 as const, body: { error: (err as Error).message } };
+  }
 }
 
 export async function handleGetMenu(restaurantId: number) {

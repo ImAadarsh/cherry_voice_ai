@@ -7,7 +7,9 @@ import {
   handleGetRestaurantInfo,
   handleLookupCustomer,
   handleSendPaymentLink,
+  handleUpdateOrder,
 } from "@/lib/integrations/omnidim-handlers";
+import type { VoiceSessionRecord } from "./session-store";
 
 export const CHERRY_VOICE_TOOL_DECLARATIONS = [
   {
@@ -40,7 +42,7 @@ export const CHERRY_VOICE_TOOL_DECLARATIONS = [
   {
     name: "create_order",
     description:
-      "Place an order after collecting phone, name, order_type, and items. Never call without required fields.",
+      "Place an order after collecting phone, name, order_type, and items. Only call once per call — if an order already exists, use update_order instead.",
     parameters: {
       type: SchemaType.OBJECT,
       properties: {
@@ -64,6 +66,36 @@ export const CHERRY_VOICE_TOOL_DECLARATIONS = [
         address: { type: SchemaType.STRING },
       },
       required: ["phone", "items"],
+    },
+  },
+  {
+    name: "update_order",
+    description:
+      "Update an existing order from this call (name, phone, address, items, order_type, notes). Requires order_id from create_order.",
+    parameters: {
+      type: SchemaType.OBJECT,
+      properties: {
+        order_id: { type: SchemaType.NUMBER },
+        phone: { type: SchemaType.STRING },
+        name: { type: SchemaType.STRING },
+        order_type: { type: SchemaType.STRING, description: "pickup, delivery, or dine_in" },
+        items: {
+          type: SchemaType.ARRAY,
+          items: {
+            type: SchemaType.OBJECT,
+            properties: {
+              name: { type: SchemaType.STRING },
+              quantity: { type: SchemaType.NUMBER },
+              sku: { type: SchemaType.STRING },
+              notes: { type: SchemaType.STRING },
+            },
+            required: ["name", "quantity"],
+          },
+        },
+        notes: { type: SchemaType.STRING },
+        address: { type: SchemaType.STRING },
+      },
+      required: ["order_id"],
     },
   },
   {
@@ -100,6 +132,7 @@ export async function executeCherryVoiceTool(
   restaurantId: number,
   name: string,
   args: Record<string, unknown>,
+  session?: VoiceSessionRecord,
 ): Promise<{ ok: boolean; data?: unknown; error?: string }> {
   try {
     switch (name) {
@@ -117,8 +150,28 @@ export async function executeCherryVoiceTool(
         return { ok: result.status < 400, data: result.body };
       }
       case "create_order": {
-        const result = await handleCreateOrder(restaurantId, args);
-        return { ok: result.status < 400, data: result.body };
+        if (session?.orderId) {
+          return {
+            ok: false,
+            error: `Order ${session.orderId} already exists for this call. Use update_order with order_id ${session.orderId} to change details.`,
+          };
+        }
+        const result = await handleCreateOrder(restaurantId, {
+          ...args,
+          agent_id: session?.agentId ?? undefined,
+          call_log_id: session?.callLogId ?? undefined,
+        });
+        if (result.status < 400 && session) {
+          const body = result.body as { order_id?: number };
+          if (body.order_id) session.orderId = body.order_id;
+        }
+        return { ok: result.status < 400, data: result.body, error: result.status >= 400 ? String((result.body as { error?: string }).error ?? "create_order failed") : undefined };
+      }
+      case "update_order": {
+        const result = await handleUpdateOrder(restaurantId, args, {
+          sessionOrderId: session?.orderId ?? null,
+        });
+        return { ok: result.status < 400, data: result.body, error: result.status >= 400 ? String((result.body as { error?: string }).error ?? "update_order failed") : undefined };
       }
       case "send_payment_link": {
         const result = await handleSendPaymentLink(restaurantId, args);

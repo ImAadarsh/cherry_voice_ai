@@ -36,7 +36,7 @@ export async function POST(
     return cherryVoiceJson({ ok: true, action: "interrupt" });
   }
 
-  stopVoiceOrchestrator(params.id);
+  await stopVoiceOrchestrator(params.id);
   deleteVoiceSession(params.id);
   return cherryVoiceJson({ ok: true, action: "end" });
 }

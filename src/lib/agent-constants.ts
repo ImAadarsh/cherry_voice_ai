@@ -17,6 +17,7 @@ export const CHERRY_VOICE_INTEGRATION_TOOLS = [
   { name: "get_restaurant_info", label: "Restaurant info", description: "Hours, address, delivery area, policies" },
   { name: "lookup_customer", label: "Customer lookup", description: "Find returning customers by phone" },
   { name: "create_order", label: "Place orders", description: "Create pickup, delivery, or dine-in orders" },
+  { name: "update_order", label: "Update orders", description: "Change order details during the same call" },
   { name: "send_payment_link", label: "Payment links", description: "Send secure payment links for orders" },
   { name: "create_reservation", label: "Reservations", description: "Book table reservations" },
 ] as const;

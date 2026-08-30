@@ -123,6 +123,8 @@ export interface CallLog {
   orderId?: string;
   recordingUrl?: string;
   sentiment: "positive" | "neutral" | "negative";
+  source?: "platform" | "cherry_voice";
+  sessionId?: string;
 }
 
 export type PaymentMethod = "card" | "upi" | "wallet" | "cash" | "link";

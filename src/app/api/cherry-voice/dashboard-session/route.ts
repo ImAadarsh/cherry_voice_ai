@@ -39,11 +39,13 @@ export async function POST(req: Request) {
 
     let voiceId = settings.inworldVoiceId;
     let greeting = settings.greeting;
+    let agentDbId: number | null = null;
 
     if (parsed.success && parsed.data.agent_id) {
       const agents = await listAgents(restaurantId);
       const agent = agents.find((a) => a.omnidim_agent_id === parsed.data.agent_id);
       if (agent && String(agent.agent_type ?? "platform") === "native") {
+        agentDbId = agent.id;
         if (agent.voice_id) voiceId = String(agent.voice_id);
         const config =
           agent.config && typeof agent.config === "object"
@@ -61,6 +63,7 @@ export async function POST(req: Request) {
       restaurantId: settings.restaurantId,
       voiceId,
       greeting,
+      agentId: agentDbId,
     });
 
     try {
