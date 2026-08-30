@@ -50,6 +50,11 @@ export interface VoiceSessionRecord {
   textOnlyMode: boolean;
   ttsFailureCount: number;
   bargeInCount: number;
+  turnBargeIn: boolean;
+  speakingStartedAt: number | null;
+  speakGeneration: number;
+  speakQueue: Promise<void>;
+  activeSpeakCount: number;
   menuCache: { body: unknown; expiresAt: number } | null;
   createdAt: number;
   lastActivityAt: number;
@@ -122,6 +127,11 @@ export function createVoiceSession(input: {
     textOnlyMode: false,
     ttsFailureCount: 0,
     bargeInCount: 0,
+    turnBargeIn: false,
+    speakingStartedAt: null,
+    speakGeneration: 0,
+    speakQueue: Promise.resolve(),
+    activeSpeakCount: 0,
     menuCache: null,
     createdAt: Date.now(),
     lastActivityAt: Date.now(),
@@ -223,6 +233,7 @@ export function subscribeSession(
 
 export function recordBargeIn(session: VoiceSessionRecord): void {
   session.bargeInCount += 1;
+  session.turnBargeIn = true;
 }
 
 export function enableTextOnlyMode(session: VoiceSessionRecord): void {
@@ -265,10 +276,13 @@ export function cancelPendingTts(session: VoiceSessionRecord): void {
   }
 }
 
-/** User barge-in: abort TTS and tell the client to stop playback. */
+/** User barge-in: abort TTS, drop queued speech, and tell the client to stop playback. */
 export function interruptSpeech(session: VoiceSessionRecord): void {
+  session.speakGeneration += 1;
+  session.activeSpeakCount = 0;
   cancelPendingTts(session);
   session.isSpeaking = false;
+  session.speakingStartedAt = null;
   if (session.state === "speaking") {
     setSessionState(session, "listening");
   }

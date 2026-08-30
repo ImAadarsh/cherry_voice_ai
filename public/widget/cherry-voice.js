@@ -368,10 +368,6 @@
     state.eventSource.addEventListener("transcript", function (ev) {
       try {
         var data = JSON.parse(ev.data);
-        if (!data.isFinal && data.role === "user") {
-          stopPlayback();
-          sendInterrupt();
-        }
         if (data.text && data.isFinal) {
           state.transcript = data.text;
           transcriptEl.textContent = data.text;
@@ -447,7 +443,13 @@
   }
 
   function startMic(session) {
-    return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+    return navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    }).then(function (stream) {
       state.mediaStream = stream;
       ensurePlaybackContext();
       state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -472,7 +474,6 @@
           });
         };
         source.connect(state.workletNode);
-        state.workletNode.connect(state.audioContext.destination);
       });
     });
   }

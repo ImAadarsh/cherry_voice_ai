@@ -82,16 +82,6 @@ export function CherryVoiceWebCallPanel({
     audioFailCountRef.current = 0;
   }, []);
 
-  const sendInterrupt = useCallback(() => {
-    const session = sessionRef.current;
-    if (!session?.control_url) return;
-    void fetch(session.control_url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "interrupt" }),
-    }).catch(() => {});
-  }, []);
-
   const endCall = useCallback(() => {
     closingRef.current = true;
     activeRef.current = false;
@@ -165,11 +155,6 @@ export function CherryVoiceWebCallPanel({
             role?: string;
           };
           if (!data.text) return;
-
-          if (!data.isFinal && data.role === "user") {
-            stopPlayback();
-            sendInterrupt();
-          }
 
           if (data.isFinal && data.role === "user") {
             setTranscript((prev) => [
@@ -281,7 +266,7 @@ export function CherryVoiceWebCallPanel({
         }
       };
     },
-    [endCall, mapServerState, sendInterrupt, stopPlayback],
+    [endCall, mapServerState, stopPlayback],
   );
 
   const startMic = useCallback(async (session: CherryVoiceSession) => {

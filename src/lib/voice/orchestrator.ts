@@ -8,7 +8,6 @@ import {
   enableTextOnlyMode,
   getVoiceSession,
   interruptSpeech,
-  cancelPendingTts,
   recordBargeIn,
   setSessionState,
   startCallDurationMonitor,
@@ -57,6 +56,11 @@ const SILENCE_PROMPT_AFTER_MS = 45_000;
 const TTS_FLASH_MODEL = "inworld-tts-2-flash";
 const LOW_STT_CONFIDENCE = 0.55;
 const TTS_RETRY_MAX_CHARS = 240;
+/** Ignore barge-in briefly after TTS starts (echo from speakers). */
+const BARGE_IN_GRACE_MS = 700;
+/** Partial transcripts need high confidence before interrupting agent speech. */
+const BARGE_IN_MIN_CONFIDENCE = 0.78;
+const BARGE_IN_MIN_PARTIAL_CHARS = 5;
 
 type SpeakOptions = {
   skipTranscriptLog?: boolean;
@@ -70,6 +74,38 @@ function truncateForTtsRetry(text: string): string {
   const slice = trimmed.slice(0, TTS_RETRY_MAX_CHARS);
   const lastSpace = slice.lastIndexOf(" ");
   return (lastSpace > 80 ? slice.slice(0, lastSpace) : slice).trim();
+}
+
+function shouldAllowBargeIn(
+  session: VoiceSessionRecord,
+  text: string,
+  isFinal: boolean,
+  confidence: number | null | undefined,
+): boolean {
+  if (!session.isSpeaking) return false;
+
+  const elapsed = Date.now() - (session.speakingStartedAt ?? 0);
+  if (elapsed < BARGE_IN_GRACE_MS) return false;
+
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+
+  if (isFinal) return trimmed.length >= 2;
+
+  if (trimmed.length < BARGE_IN_MIN_PARTIAL_CHARS) return false;
+  if (confidence != null && confidence > 0 && confidence < BARGE_IN_MIN_CONFIDENCE) return false;
+  return true;
+}
+
+function maybeBargeIn(
+  session: VoiceSessionRecord,
+  text: string,
+  isFinal: boolean,
+  confidence?: number | null,
+): void {
+  if (!shouldAllowBargeIn(session, text, isFinal, confidence)) return;
+  recordBargeIn(session);
+  interruptSpeech(session);
 }
 
 function sessionMessagesToLlm(
@@ -293,9 +329,25 @@ async function speakResponse(
   const trimmed = text.trim();
   if (!trimmed || session.state === "ended") return;
 
-  cancelPendingTts(session);
+  const generation = session.speakGeneration;
+  session.speakQueue = session.speakQueue
+    .catch(() => {})
+    .then(() => speakResponseNow(session, trimmed, options, generation));
+  await session.speakQueue;
+}
+
+async function speakResponseNow(
+  session: VoiceSessionRecord,
+  trimmed: string,
+  options: SpeakOptions | undefined,
+  generation: number,
+): Promise<void> {
+  if (generation !== session.speakGeneration || session.state === "ended") return;
+
+  session.activeSpeakCount += 1;
   session.ttsAbort = new AbortController();
   session.isSpeaking = true;
+  session.speakingStartedAt = Date.now();
   setSessionState(session, "speaking");
 
   if (!options?.skipTranscriptLog) {
@@ -304,7 +356,6 @@ async function speakResponse(
   }
 
   if (session.textOnlyMode) {
-    session.isSpeaking = false;
     session.ttsAbort = null;
     setSessionState(session, "listening");
     return;
@@ -363,10 +414,16 @@ async function speakResponse(
       if (session.ttsFailureCount >= 2) enableTextOnlyMode(session);
     }
   } finally {
-    session.isSpeaking = false;
+    if (generation === session.speakGeneration) {
+      session.activeSpeakCount = Math.max(0, session.activeSpeakCount - 1);
+    }
     session.ttsAbort = null;
-    if (session.state === "speaking") {
-      setSessionState(session, "listening");
+    session.speakingStartedAt = null;
+    if (session.activeSpeakCount === 0) {
+      session.isSpeaking = false;
+      if (session.state === "speaking") {
+        setSessionState(session, "listening");
+      }
     }
   }
 }
@@ -382,6 +439,7 @@ async function processUtterance(
   session.processing = true;
   session.pendingUtterance = "";
   session.turnCount += 1;
+  session.turnBargeIn = false;
   const timing = createTurnTiming(session.turnCount, Date.now());
   timing.llmStartAt = Date.now();
   setSessionState(session, "thinking");
@@ -419,7 +477,7 @@ async function processUtterance(
       conf: sttConfidence ?? null,
       user: text,
       agent: reply,
-      bargeIn: session.bargeInCount > 0,
+      bargeIn: session.turnBargeIn,
     });
     await logCherryVoiceTurnMetric(session, metric);
     session.processing = false;
@@ -493,9 +551,8 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
   };
 
   stt.onTranscript((event) => {
-    if (event.speechStarted && session.isSpeaking) {
-      recordBargeIn(session);
-      interruptSpeech(session);
+    if (event.speechStarted && session.isSpeaking && event.text?.trim()) {
+      maybeBargeIn(session, event.text, false, event.confidence);
     }
     if (event.confidence != null) lastConfidence = event.confidence;
 
@@ -510,8 +567,7 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
       session.pendingUtterance = `${session.pendingUtterance} ${event.text}`.trim();
       scheduleUtterance();
     } else if (session.isSpeaking) {
-      recordBargeIn(session);
-      interruptSpeech(session);
+      maybeBargeIn(session, event.text, false, event.confidence);
     }
   });
 

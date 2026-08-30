@@ -7,7 +7,13 @@ export async function startWorkletMicCapture(opts: {
   isActive: () => boolean;
   onUploadFailure?: () => void;
 }): Promise<{ handle: MicCaptureHandle }> {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    },
+  });
   const ctx = new AudioContext();
   if (ctx.state === "suspended") {
     await ctx.resume();
@@ -23,7 +29,6 @@ export async function startWorkletMicCapture(opts: {
       .catch(() => opts.onUploadFailure?.());
   };
   src.connect(node);
-  node.connect(ctx.destination);
   return {
     handle: {
       stop: () => {
