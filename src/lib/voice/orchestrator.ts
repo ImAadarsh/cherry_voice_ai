@@ -2,7 +2,7 @@ import "server-only";
 import { createDeepgramSttProvider } from "./providers/deepgram-stt";
 import { createGeminiLlmProvider } from "./providers/gemini-llm";
 import { createInworldTtsProvider } from "./providers/inworld-tts";
-import type { LlmMessage } from "./providers/types";
+import type { LlmMessage, LlmTurnResult } from "./providers/types";
 import {
   emitSessionEvent,
   enableTextOnlyMode,
@@ -60,14 +60,65 @@ type SpeakOptions = {
   timing?: TurnTiming | null;
 };
 
+function sessionMessagesToLlm(
+  messages: VoiceSessionRecord["messages"],
+): LlmMessage[] {
+  return messages.map((m) => ({
+    role: m.role,
+    content: m.content,
+    ...(m.toolCalls?.length ? { toolCalls: m.toolCalls } : {}),
+    ...(m.toolResults?.length ? { toolResults: m.toolResults } : {}),
+  }));
+}
+
+function llmMessageToSession(m: LlmMessage): VoiceSessionRecord["messages"][number] {
+  return {
+    role: m.role as "user" | "model",
+    content: m.content ?? "",
+    ...(m.toolCalls?.length ? { toolCalls: m.toolCalls } : {}),
+    ...(m.toolResults?.length ? { toolResults: m.toolResults } : {}),
+  };
+}
+
+function appendTurnToSession(
+  session: VoiceSessionRecord,
+  baseCount: number,
+  messages: LlmMessage[],
+  userText: string,
+  reply: string,
+): void {
+  session.messages.push({ role: "user", content: userText });
+  for (const m of messages.slice(baseCount + 1)) {
+    session.messages.push(llmMessageToSession(m));
+  }
+  session.messages.push({ role: "model", content: reply });
+}
+
+async function executeToolCalls(
+  session: VoiceSessionRecord,
+  calls: LlmTurnResult["toolCalls"],
+): Promise<Array<{ name: string; result: unknown }>> {
+  return Promise.all(
+    calls.map(async (call) => {
+      const result = await runToolWithTimeout(call.name, () =>
+        executeCherryVoiceTool(session.restaurantId, call.name, call.args, session),
+      );
+      await logCherryVoiceToolCall(session, call.name, call.args, result);
+      updateConversationMemoryFromTool(session, call.name, call.args, result);
+      return { name: call.name, result };
+    }),
+  );
+}
+
 async function streamLlmToSpeech(
   session: VoiceSessionRecord,
   userText: string,
   timing: TurnTiming,
 ): Promise<string> {
   const systemPrompt = await buildVoiceSystemPrompt(session, userText);
+  const baseCount = session.messages.length;
   const messages: LlmMessage[] = [
-    ...session.messages.map((m) => ({ role: m.role, content: m.content })),
+    ...sessionMessagesToLlm(session.messages),
     { role: "user", content: userText },
   ];
 
@@ -104,22 +155,25 @@ async function streamLlmToSpeech(
       type: "tool_start",
       payload: { tools: turn.toolCalls.map((c) => c.name) },
     });
-    const toolResults = await Promise.all(
-      turn.toolCalls.map(async (call) => {
-        const result = await runToolWithTimeout(call.name, () =>
-          executeCherryVoiceTool(session.restaurantId, call.name, call.args, session),
-        );
-        await logCherryVoiceToolCall(session, call.name, call.args, result);
-        updateConversationMemoryFromTool(session, call.name, call.args, result);
-        return { name: call.name, result };
-      }),
-    );
-    timing.toolEndAt = Date.now();
 
-    messages.push({ role: "model", content: turn.text, toolCalls: turn.toolCalls });
-    const followUp = await llm.continueWithToolResults(messages, toolResults, { systemPrompt });
-    const reply = followUp.text || turn.text;
+    let currentTurn = turn;
+    let guard = 0;
+    let reply = turn.text;
+
+    while (currentTurn.toolCalls.length > 0 && guard < 6) {
+      guard += 1;
+      const toolResults = await executeToolCalls(session, currentTurn.toolCalls);
+      timing.toolEndAt = Date.now();
+
+      messages.push({ role: "model", content: currentTurn.text, toolCalls: currentTurn.toolCalls });
+      const followUp = await llm.continueWithToolResults(messages, toolResults, { systemPrompt });
+      messages.push({ role: "user", toolResults });
+      reply = followUp.text || reply;
+      currentTurn = followUp;
+    }
+
     await speakResponse(session, reply, { timing });
+    appendTurnToSession(session, baseCount, messages, userText, reply);
     return reply;
   }
 
@@ -136,7 +190,9 @@ async function streamLlmToSpeech(
     emitSessionEvent(session, { type: "assistant_text", payload: { text: finalText } });
   }
 
-  return finalText || "Sorry, I couldn't complete that. Could you repeat?";
+  const reply = finalText || "Sorry, I couldn't complete that. Could you repeat?";
+  appendTurnToSession(session, baseCount, messages, userText, reply);
+  return reply;
 }
 
 async function synthesizeWithChunks(
@@ -300,8 +356,6 @@ async function processUtterance(
   let zeroAudio = false;
   try {
     reply = await streamLlmToSpeech(session, text, timing);
-    session.messages.push({ role: "user", content: text });
-    session.messages.push({ role: "model", content: reply });
     zeroAudio = timing.firstAudioAt == null && !session.textOnlyMode;
   } catch (err) {
     session.failed = true;

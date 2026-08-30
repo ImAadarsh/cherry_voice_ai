@@ -4,13 +4,20 @@ import type { LanguageMix } from "./language-detect";
 import type { PersonalityPreset } from "./personality";
 import type { VoiceTransport } from "./orchestrator-interface";
 import type { HoursStatus } from "./restaurant-context";
-import type { VoiceSessionEvent, VoiceSessionState } from "./providers/types";
+import type { LlmToolCall, VoiceSessionEvent, VoiceSessionState } from "./providers/types";
 import type { ToolCallEntry, TranscriptEntry } from "@/lib/repositories/calls";
 import { normalizePersonalityPreset } from "./personality";
 
 export interface ConversationMemory {
   phone?: string;
   name?: string;
+}
+
+export interface SessionMessage {
+  role: "user" | "model";
+  content: string;
+  toolCalls?: LlmToolCall[];
+  toolResults?: Array<{ name: string; result: unknown }>;
 }
 
 export interface VoiceSessionRecord {
@@ -24,7 +31,7 @@ export interface VoiceSessionRecord {
   callerPhone: string | null;
   branchLabel: string | null;
   state: VoiceSessionState;
-  messages: Array<{ role: "user" | "model"; content: string }>;
+  messages: SessionMessage[];
   transcript: TranscriptEntry[];
   toolCalls: ToolCallEntry[];
   turnMetrics: TurnMetricEntry[];

@@ -16,24 +16,100 @@ type GeminiContent = { role: "user" | "model"; parts: Part[] };
 type GeminiPartWithSignature = Part & {
   thoughtSignature?: string;
   thought_signature?: string;
+  functionCall?: { name?: string; args?: Record<string, unknown>; id?: string };
 };
+
+/** Gemini may prefix tool names with default_api: in errors; our declarations use bare names. */
+export function normalizeGeminiToolName(name: string): string {
+  return name.replace(/^default_api:/, "");
+}
 
 function getThoughtSignature(part: GeminiPartWithSignature): string | undefined {
   return part.thoughtSignature ?? part.thought_signature;
 }
 
-function buildFunctionCallPart(tc: NonNullable<LlmMessage["toolCalls"]>[number]): GeminiPartWithSignature {
-  const part: GeminiPartWithSignature = {
+function buildFunctionCallPart(tc: NonNullable<LlmMessage["toolCalls"]>[number]): GeminiPartWithSignature | null {
+  if (!tc.thoughtSignature) return null;
+  return {
     functionCall: {
       name: tc.name,
       args: tc.args,
       ...(tc.id ? { id: tc.id } : {}),
     },
+    thoughtSignature: tc.thoughtSignature,
   };
-  if (tc.thoughtSignature) {
-    part.thoughtSignature = tc.thoughtSignature;
+}
+
+function toolCallFallbackText(tc: NonNullable<LlmMessage["toolCalls"]>[number]): string {
+  const name = normalizeGeminiToolName(tc.name);
+  const args = Object.keys(tc.args).length > 0 ? ` ${JSON.stringify(tc.args)}` : "";
+  return `[Called ${name}${args}]`;
+}
+
+/** Merge stream chunks — final aggregated response drops thoughtSignature on functionCall parts. */
+function accumulateStreamParts(accumulated: Part[], incoming: Part[] | undefined): void {
+  if (!incoming?.length) return;
+  for (const part of incoming) {
+    const signed = part as GeminiPartWithSignature;
+    if (signed.functionCall?.name) {
+      const sig = getThoughtSignature(signed);
+      const matchIdx = accumulated.findIndex((existing) => {
+        const fc = (existing as GeminiPartWithSignature).functionCall;
+        if (!fc) return false;
+        if (signed.functionCall?.id && fc.id) return fc.id === signed.functionCall.id;
+        return fc.name === signed.functionCall.name;
+      });
+      if (matchIdx >= 0) {
+        if (sig) {
+          const existing = accumulated[matchIdx] as GeminiPartWithSignature;
+          accumulated[matchIdx] = {
+            functionCall: signed.functionCall ?? existing.functionCall,
+            thoughtSignature: sig,
+          } as Part;
+        }
+      } else {
+        accumulated.push(part);
+      }
+      continue;
+    }
+    const text = (part as { text?: string }).text;
+    if (text) {
+      const textIdx = accumulated.findIndex((p) => (p as { text?: string }).text !== undefined);
+      if (textIdx >= 0) {
+        const prev = (accumulated[textIdx] as { text?: string }).text ?? "";
+        accumulated[textIdx] = { text: prev + text };
+      } else {
+        accumulated.push(part);
+      }
+    }
   }
-  return part;
+}
+
+function resolveResponseParts(accumulated: Part[], responseParts: Part[] | undefined): Part[] {
+  if (accumulated.length === 0) return responseParts ?? [];
+  const merged = [...accumulated];
+  for (const part of responseParts ?? []) {
+    const signed = part as GeminiPartWithSignature;
+    if (signed.functionCall?.name) {
+      const sig = getThoughtSignature(signed);
+      const matchIdx = merged.findIndex((existing) => {
+        const fc = (existing as GeminiPartWithSignature).functionCall;
+        return fc?.name === signed.functionCall?.name || (fc?.id && fc.id === signed.functionCall?.id);
+      });
+      if (matchIdx >= 0) {
+        if (sig && !getThoughtSignature(merged[matchIdx] as GeminiPartWithSignature)) {
+          const existing = merged[matchIdx] as GeminiPartWithSignature;
+          merged[matchIdx] = {
+            functionCall: signed.functionCall ?? existing.functionCall,
+            thoughtSignature: sig,
+          } as Part;
+        }
+      } else {
+        merged.push(part);
+      }
+    }
+  }
+  return merged;
 }
 
 function toFunctionResponsePayload(result: unknown): object {
@@ -69,13 +145,20 @@ function messagesToContents(messages: LlmMessage[]): GeminiContent[] {
 
     if (m.role === "model") {
       const parts: Part[] = [];
+      const fallbackLines: string[] = [];
       if (m.toolCalls?.length) {
         for (const tc of m.toolCalls) {
-          parts.push(buildFunctionCallPart(tc));
+          const fcPart = buildFunctionCallPart(tc);
+          if (fcPart) {
+            parts.push(fcPart);
+          } else {
+            fallbackLines.push(toolCallFallbackText(tc));
+          }
         }
       }
-      if (m.content) {
-        parts.push({ text: m.content });
+      const text = [fallbackLines.join(" "), m.content].filter(Boolean).join(" ").trim();
+      if (text) {
+        parts.push({ text });
       }
       if (parts.length > 0) {
         contents.push({ role: "model", parts });
@@ -96,7 +179,7 @@ function parseToolCalls(parts: Part[] | undefined): LlmTurnResult["toolCalls"] {
     const fc = signed.functionCall;
     if (fc?.name) {
       calls.push({
-        name: fc.name,
+        name: normalizeGeminiToolName(fc.name),
         args: fc.args ?? {},
         thoughtSignature: getThoughtSignature(signed),
         id: fc.id,
@@ -160,15 +243,18 @@ async function* streamGenerate(
   const model = await getModel(options?.systemPrompt);
   const result = await model.generateContentStream({ contents }, { signal: options?.signal });
   let fullText = "";
+  const accumulatedParts: Part[] = [];
   for await (const chunk of result.stream) {
     const t = chunk.text();
     if (t) {
       fullText += t;
       yield t;
     }
+    accumulateStreamParts(accumulatedParts, chunk.candidates?.[0]?.content?.parts);
   }
   const response = await result.response;
-  const parts = response.candidates?.[0]?.content?.parts;
+  const responseParts = response.candidates?.[0]?.content?.parts;
+  const parts = resolveResponseParts(accumulatedParts, responseParts);
   return {
     text: extractText(parts) || fullText.trim(),
     toolCalls: parseToolCalls(parts),
@@ -202,15 +288,22 @@ export function createGeminiLlmProvider(): LlmProvider {
 
     async continueWithToolResults(messages, toolResults, options) {
       const contents = messagesToContents(messages);
-      contents.push({
-        role: "user",
-        parts: toolResults.map((tr) => ({
-          functionResponse: {
-            name: tr.name,
-            response: toFunctionResponsePayload(tr.result),
-          },
-        })),
-      });
+      const last = messages[messages.length - 1];
+      const resultsAlreadyInHistory =
+        last?.role === "user" &&
+        last.toolResults?.length === toolResults.length &&
+        last.toolResults.every((tr, i) => tr.name === toolResults[i]?.name);
+      if (!resultsAlreadyInHistory) {
+        contents.push({
+          role: "user",
+          parts: toolResults.map((tr) => ({
+            functionResponse: {
+              name: tr.name,
+              response: toFunctionResponsePayload(tr.result),
+            },
+          })),
+        });
+      }
 
       return runGenerate(contents, options);
     },
