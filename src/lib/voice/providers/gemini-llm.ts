@@ -13,6 +13,29 @@ import { CHERRY_VOICE_TOOL_DECLARATIONS } from "../tools";
 
 type GeminiContent = { role: "user" | "model"; parts: Part[] };
 
+type GeminiPartWithSignature = Part & {
+  thoughtSignature?: string;
+  thought_signature?: string;
+};
+
+function getThoughtSignature(part: GeminiPartWithSignature): string | undefined {
+  return part.thoughtSignature ?? part.thought_signature;
+}
+
+function buildFunctionCallPart(tc: NonNullable<LlmMessage["toolCalls"]>[number]): GeminiPartWithSignature {
+  const part: GeminiPartWithSignature = {
+    functionCall: {
+      name: tc.name,
+      args: tc.args,
+      ...(tc.id ? { id: tc.id } : {}),
+    },
+  };
+  if (tc.thoughtSignature) {
+    part.thoughtSignature = tc.thoughtSignature;
+  }
+  return part;
+}
+
 function toFunctionResponsePayload(result: unknown): object {
   if (result !== null && typeof result === "object" && !Array.isArray(result)) {
     return result as object;
@@ -48,7 +71,7 @@ function messagesToContents(messages: LlmMessage[]): GeminiContent[] {
       const parts: Part[] = [];
       if (m.toolCalls?.length) {
         for (const tc of m.toolCalls) {
-          parts.push({ functionCall: { name: tc.name, args: tc.args } });
+          parts.push(buildFunctionCallPart(tc));
         }
       }
       if (m.content) {
@@ -67,10 +90,17 @@ function parseToolCalls(parts: Part[] | undefined): LlmTurnResult["toolCalls"] {
   if (!parts) return [];
   const calls: LlmTurnResult["toolCalls"] = [];
   for (const part of parts) {
-    const fc = (part as { functionCall?: { name?: string; args?: Record<string, unknown> } })
-      .functionCall;
+    const signed = part as GeminiPartWithSignature & {
+      functionCall?: { name?: string; args?: Record<string, unknown>; id?: string };
+    };
+    const fc = signed.functionCall;
     if (fc?.name) {
-      calls.push({ name: fc.name, args: fc.args ?? {} });
+      calls.push({
+        name: fc.name,
+        args: fc.args ?? {},
+        thoughtSignature: getThoughtSignature(signed),
+        id: fc.id,
+      });
     }
   }
   return calls;

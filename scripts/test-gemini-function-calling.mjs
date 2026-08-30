@@ -1,5 +1,6 @@
 /**
- * Smoke test: Gemini function calling with user-role functionResponse.
+ * Smoke test: Gemini function calling with user-role functionResponse
+ * and thoughtSignature preservation when replaying model functionCall parts.
  * Run: node scripts/test-gemini-function-calling.mjs
  */
 import "dotenv/config";
@@ -28,6 +29,29 @@ const model = genAI.getGenerativeModel({
   toolConfig: { functionCallingConfig: { mode: FunctionCallingMode.AUTO } },
 });
 
+function parseToolCalls(parts) {
+  return parts
+    .filter((p) => p.functionCall?.name)
+    .map((p) => ({
+      name: p.functionCall.name,
+      args: p.functionCall.args ?? {},
+      thoughtSignature: p.thoughtSignature ?? p.thought_signature,
+      id: p.functionCall.id,
+    }));
+}
+
+function buildFunctionCallPart(tc) {
+  const part = {
+    functionCall: {
+      name: tc.name,
+      args: tc.args,
+      ...(tc.id ? { id: tc.id } : {}),
+    },
+  };
+  if (tc.thoughtSignature) part.thoughtSignature = tc.thoughtSignature;
+  return part;
+}
+
 console.log(`Testing ${modelName} function calling...`);
 
 // Step 1: User asks for menu
@@ -35,19 +59,25 @@ const step1 = await model.generateContent({
   contents: [{ role: "user", parts: [{ text: "What's on the menu?" }] }],
 });
 const step1Parts = step1.response.candidates?.[0]?.content?.parts ?? [];
-const toolCalls = step1Parts.filter((p) => p.functionCall).map((p) => p.functionCall);
-console.log("Step 1 tool calls:", toolCalls.map((t) => t?.name));
+const toolCalls = parseToolCalls(step1Parts);
+console.log("Step 1 tool calls:", toolCalls.map((t) => t.name));
 
 if (toolCalls.length === 0) {
   console.log("No tool call returned (model may have answered directly):", step1Parts);
   process.exit(0);
 }
 
-// Step 2: Send function response under user role (the fix)
+if (!toolCalls[0].thoughtSignature) {
+  console.error("FAIL: model did not return thoughtSignature on functionCall");
+  process.exit(1);
+}
+
+// Step 2: Replay reconstructed parts (mirrors gemini-llm.ts messagesToContents)
+const reconstructedModelParts = toolCalls.map(buildFunctionCallPart);
 const step2 = await model.generateContent({
   contents: [
     { role: "user", parts: [{ text: "What's on the menu?" }] },
-    { role: "model", parts: step1Parts },
+    { role: "model", parts: reconstructedModelParts },
     {
       role: "user",
       parts: [
@@ -69,4 +99,4 @@ const step2Text = step2.response.candidates?.[0]?.content?.parts
   .join("")
   .trim();
 console.log("Step 2 response:", step2Text?.slice(0, 200));
-console.log("PASS: function calling loop works with user-role functionResponse");
+console.log("PASS: function calling loop preserves thoughtSignature on replay");

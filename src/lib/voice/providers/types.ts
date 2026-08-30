@@ -41,6 +41,10 @@ export interface LlmMessage {
 export interface LlmToolCall {
   name: string;
   args: Record<string, unknown>;
+  /** Gemini 3 requires replaying thoughtSignature on functionCall parts in history. */
+  thoughtSignature?: string;
+  /** Optional function call id from Gemini for mapping functionResponse. */
+  id?: string;
 }
 
 export interface LlmTurnResult {
