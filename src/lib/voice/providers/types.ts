@@ -34,6 +34,8 @@ export interface TtsProvider {
 export interface LlmMessage {
   role: "user" | "model" | "system";
   content: string;
+  toolCalls?: LlmToolCall[];
+  toolResults?: Array<{ name: string; result: unknown }>;
 }
 
 export interface LlmToolCall {

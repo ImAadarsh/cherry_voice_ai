@@ -11,13 +11,56 @@ import { getGeminiApiKey } from "@/lib/platform-config";
 import { getCherryVoiceGeminiModel } from "../config";
 import { CHERRY_VOICE_TOOL_DECLARATIONS } from "../tools";
 
-function toGeminiHistory(messages: LlmMessage[]) {
-  return messages
-    .filter((m) => m.role !== "system")
-    .map((m) => ({
-      role: m.role === "model" ? "model" : "user",
-      parts: [{ text: m.content }],
-    }));
+type GeminiContent = { role: "user" | "model"; parts: Part[] };
+
+function toFunctionResponsePayload(result: unknown): object {
+  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
+    return result as object;
+  }
+  return { result };
+}
+
+/** Build Gemini contents with functionResponse under role "user" (not legacy "function"). */
+function messagesToContents(messages: LlmMessage[]): GeminiContent[] {
+  const contents: GeminiContent[] = [];
+
+  for (const m of messages) {
+    if (m.role === "system") continue;
+
+    if (m.role === "user") {
+      if (m.toolResults?.length) {
+        contents.push({
+          role: "user",
+          parts: m.toolResults.map((tr) => ({
+            functionResponse: {
+              name: tr.name,
+              response: toFunctionResponsePayload(tr.result),
+            },
+          })),
+        });
+      } else if (m.content) {
+        contents.push({ role: "user", parts: [{ text: m.content }] });
+      }
+      continue;
+    }
+
+    if (m.role === "model") {
+      const parts: Part[] = [];
+      if (m.toolCalls?.length) {
+        for (const tc of m.toolCalls) {
+          parts.push({ functionCall: { name: tc.name, args: tc.args } });
+        }
+      }
+      if (m.content) {
+        parts.push({ text: m.content });
+      }
+      if (parts.length > 0) {
+        contents.push({ role: "model", parts });
+      }
+    }
+  }
+
+  return contents;
 }
 
 function parseToolCalls(parts: Part[] | undefined): LlmTurnResult["toolCalls"] {
@@ -64,47 +107,47 @@ async function getModel(systemPrompt?: string) {
   });
 }
 
+async function runGenerate(
+  contents: GeminiContent[],
+  options?: { systemPrompt?: string; signal?: AbortSignal },
+): Promise<LlmTurnResult> {
+  const model = await getModel(options?.systemPrompt);
+  const result = await model.generateContent({ contents }, { signal: options?.signal });
+  const parts = result.response.candidates?.[0]?.content?.parts;
+
+  return {
+    text: extractText(parts),
+    toolCalls: parseToolCalls(parts),
+  };
+}
+
 export function createGeminiLlmProvider(): LlmProvider {
   return {
     async chat(messages, options) {
-      const model = await getModel(options?.systemPrompt);
-      const history = toGeminiHistory(messages.slice(0, -1));
+      const history = messages.slice(0, -1);
       const last = messages[messages.length - 1];
-      const chat = model.startChat({ history });
+      const contents = messagesToContents(history);
 
-      const result = await chat.sendMessage(last?.content ?? "", {
-        signal: options?.signal,
-      });
-      const response = result.response;
-      const parts = response.candidates?.[0]?.content?.parts;
+      if (last?.role === "user" && last.content) {
+        contents.push({ role: "user", parts: [{ text: last.content }] });
+      }
 
-      return {
-        text: extractText(parts),
-        toolCalls: parseToolCalls(parts),
-      };
+      return runGenerate(contents, options);
     },
 
     async continueWithToolResults(messages, toolResults, options) {
-      const model = await getModel(options?.systemPrompt);
-      const history = toGeminiHistory(messages);
-      const chat = model.startChat({ history });
-
-      const functionResponseParts = toolResults.map((tr) => ({
-        functionResponse: {
-          name: tr.name,
-          response: tr.result,
-        },
-      }));
-
-      const result = await chat.sendMessage(functionResponseParts as never, {
-        signal: options?.signal,
+      const contents = messagesToContents(messages);
+      contents.push({
+        role: "user",
+        parts: toolResults.map((tr) => ({
+          functionResponse: {
+            name: tr.name,
+            response: toFunctionResponsePayload(tr.result),
+          },
+        })),
       });
-      const parts = result.response.candidates?.[0]?.content?.parts;
 
-      return {
-        text: extractText(parts),
-        toolCalls: parseToolCalls(parts),
-      };
+      return runGenerate(contents, options);
     },
   };
 }

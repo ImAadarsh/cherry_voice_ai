@@ -58,7 +58,11 @@ async function runLlmTurn(session: VoiceSessionRecord, userText: string): Promis
       })),
     );
 
-    messages.push({ role: "model", content: turn.text || `[calling ${turn.toolCalls.map((t) => t.name).join(", ")}]` });
+    messages.push({
+      role: "model",
+      content: turn.text,
+      toolCalls: turn.toolCalls,
+    });
     turn = await llm.continueWithToolResults(messages, toolResults, { systemPrompt });
   }
 
