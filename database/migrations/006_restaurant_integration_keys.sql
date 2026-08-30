@@ -28,3 +28,6 @@ CREATE TABLE IF NOT EXISTS omnidim_agent_integrations (
   CONSTRAINT fk_omnidim_agent_integrations_restaurant FOREIGN KEY (restaurant_id)
     REFERENCES restaurants (id) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO schema_migrations (version) VALUES ('006_restaurant_integration_keys');
+

@@ -17,3 +17,6 @@ CREATE TABLE IF NOT EXISTS contact_inquiries (
   KEY idx_contact_inquiries_email (email),
   KEY idx_contact_inquiries_created (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO schema_migrations (version) VALUES ('008_contact_inquiries');
+

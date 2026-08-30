@@ -30,3 +30,5 @@ FROM restaurants r
 WHERE NOT EXISTS (
   SELECT 1 FROM cherry_voice_settings c WHERE c.restaurant_id = r.id
 );
+
+INSERT IGNORE INTO schema_migrations (version) VALUES ('010_cherry_voice_widget');

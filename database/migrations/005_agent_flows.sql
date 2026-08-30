@@ -15,3 +15,6 @@ CREATE TABLE IF NOT EXISTS agent_flows (
   CONSTRAINT fk_agent_flows_restaurant FOREIGN KEY (restaurant_id)
     REFERENCES restaurants (id) ON DELETE CASCADE ON UPDATE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+INSERT IGNORE INTO schema_migrations (version) VALUES ('005_agent_flows');
+
