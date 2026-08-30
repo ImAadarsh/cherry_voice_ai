@@ -3,7 +3,7 @@ const nextConfig = {
   reactStrictMode: true,
   // mysql2, stripe and razorpay are server-only; keep them external to the bundle
   experimental: {
-    serverComponentsExternalPackages: ["mysql2", "stripe", "razorpay", "@omnidim-ai/sdk"],
+    serverComponentsExternalPackages: ["mysql2", "stripe", "razorpay", "@omnidim-ai/sdk", "@google/generative-ai"],
   },
   async headers() {
     return [

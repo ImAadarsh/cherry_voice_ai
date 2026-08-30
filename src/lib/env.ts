@@ -29,6 +29,13 @@ const schema = z.object({
   GEMINI_API_KEY: z.string().optional().default(""),
   GEMINI_MODEL: z.string().optional().default("gemini-3.6-flash"),
 
+  // Cherry Voice native web agent
+  DEEPGRAM_API_KEY: z.string().optional().default(""),
+  INWORLD_API_KEY: z.string().optional().default(""),
+  CHERRY_VOICE_GEMINI_MODEL: z.string().optional().default("gemini-2.0-flash-lite"),
+  CHERRY_VOICE_STT_MODEL: z.string().optional().default("nova-3"),
+  CHERRY_VOICE_TTS_MODEL: z.string().optional().default("inworld-tts-2-flash"),
+
   // Stripe
   STRIPE_SECRET_KEY: z.string().optional().default(""),
   STRIPE_PUBLISHABLE_KEY: z.string().optional().default(""),

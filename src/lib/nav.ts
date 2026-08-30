@@ -48,6 +48,7 @@ export const settingsNavItems: SettingsNavItem[] = [
   { label: "Payment Gateways", href: "/settings/payment-gateways" },
   { label: "Notifications", href: "/settings/notifications" },
   { label: "Voice AI Settings", href: "/settings/omnidim" },
+  { label: "Website Voice Widget", href: "/settings/cherry-voice" },
   { label: "Agent Flows", href: "/settings/agent-flows" },
   { label: "Webhooks", href: "/settings/webhooks", superAdminOnly: true },
 ];

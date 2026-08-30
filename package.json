@@ -18,6 +18,7 @@
     "test:db": "node scripts/test-db.mjs"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "@omnidim-ai/client": "^0.1.0",
     "@omnidim-ai/sdk": "^0.3.0",
     "@radix-ui/react-avatar": "^1.2.6",
