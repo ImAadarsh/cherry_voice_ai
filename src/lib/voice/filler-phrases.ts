@@ -40,6 +40,9 @@ const SILENCE_PROMPT_HI = "आप वहाँ हैं? मैं यहाँ
 const TTS_FALLBACK_EN = "I'm having a little trouble with audio. Let me try again.";
 const TTS_FALLBACK_HI = "ऑडियो में थोड़ी समस्या है, मैं फिर से कोशिश करता हूँ।";
 
+const THINKING_FILLER_EN = "Mm-hmm.";
+const THINKING_FILLER_HI = "हाँ, सुन रहा हूँ।";
+
 export async function getToolFillerPhrase(
   restaurantId: number,
   toolNames: string[],
@@ -63,4 +66,10 @@ export async function getSilencePromptPhrase(restaurantId: number): Promise<stri
 export async function getTtsFallbackPhrase(restaurantId: number): Promise<string> {
   const locale = await localeForRestaurant(restaurantId);
   return locale === "hi" ? TTS_FALLBACK_HI : TTS_FALLBACK_EN;
+}
+
+/** Short backchannel spoken within ~300ms of user end-of-speech while LLM thinks. */
+export async function getThinkingFillerPhrase(restaurantId: number): Promise<string> {
+  const locale = await localeForRestaurant(restaurantId);
+  return locale === "hi" ? THINKING_FILLER_HI : THINKING_FILLER_EN;
 }

@@ -27,6 +27,7 @@ import {
 } from "./call-log";
 import {
   getSilencePromptPhrase,
+  getThinkingFillerPhrase,
   getToolFillerPhrase,
   getTtsFallbackPhrase,
 } from "./filler-phrases";
@@ -66,6 +67,10 @@ const BARGE_IN_MIN_PARTIAL_CHARS = 3;
 const UTTERANCE_DEBOUNCE_MS = 400;
 const UTTERANCE_MAX_WAIT_MS = 1500;
 const MIN_UTTERANCE_CHARS = 3;
+/** Backchannel filler within this window after user end-of-speech. */
+const THINKING_FILLER_DELAY_MS = 280;
+/** Resume STT after TTS ends (matches client half-duplex tail). */
+const HALF_DUPLEX_TAIL_MS = 100;
 
 type SpeakOptions = {
   skipTranscriptLog?: boolean;
@@ -81,8 +86,34 @@ function truncateForTtsRetry(text: string): string {
   return (lastSpace > 80 ? slice.slice(0, lastSpace) : slice).trim();
 }
 
+function isTurnInputBlocked(session: VoiceSessionRecord): boolean {
+  return session.state === "speaking" || session.state === "tool_running";
+}
+
+function shouldIgnoreSttEvent(session: VoiceSessionRecord, event: { text?: string; isFinal?: boolean; speechStarted?: boolean; utteranceEnd?: boolean }): boolean {
+  if (!session.isSpeaking && session.state !== "tool_running") return false;
+  if (session.sttUnblocked) return false;
+  // Half-duplex: ignore echo/partials while agent audio is playing unless user explicitly interrupted.
+  if (event.speechStarted || event.utteranceEnd) return true;
+  if (!event.text) return true;
+  return !event.isFinal;
+}
+
 function isUtteranceStale(session: VoiceSessionRecord, utteranceId: number): boolean {
   return utteranceId !== session.latestUtteranceId;
+}
+
+async function speakThinkingFiller(
+  session: VoiceSessionRecord,
+  utteranceId: number,
+): Promise<void> {
+  await new Promise((r) => setTimeout(r, THINKING_FILLER_DELAY_MS));
+  if (isUtteranceStale(session, utteranceId) || session.state !== "thinking") return;
+  const phrase = await getThinkingFillerPhrase(session.restaurantId);
+  await speakResponse(session, phrase, {
+    skipTranscriptLog: true,
+    modelId: TTS_FLASH_MODEL,
+  });
 }
 
 function shouldAllowBargeIn(
@@ -241,6 +272,7 @@ async function streamLlmToSpeech(
     }
 
     timing.toolStartAt = Date.now();
+    setSessionState(session, "tool_running");
     emitSessionEvent(session, {
       type: "tool_start",
       payload: { tools: turn.toolCalls.map((c) => c.name) },
@@ -280,13 +312,12 @@ async function streamLlmToSpeech(
   }
 
   const finalText = agentText || turn.text;
-  if (finalText && !agentText) {
-    await speakResponse(session, finalText, { timing });
-  } else if (finalText) {
-    await logCherryVoiceTranscript(session, "assistant", finalText);
-    emitSessionEvent(session, { type: "assistant_text", payload: { text: finalText } });
-    if (!session.textOnlyMode && timing.firstAudioAt == null) {
-      await speakResponse(session, finalText, { timing, skipTranscriptLog: true });
+  if (finalText) {
+    if (!agentText) {
+      await speakResponse(session, finalText, { timing });
+    } else {
+      await logCherryVoiceTranscript(session, "assistant", finalText);
+      emitSessionEvent(session, { type: "assistant_text", payload: { text: finalText } });
     }
   }
 
@@ -391,6 +422,7 @@ async function speakResponseNow(
   session.activeSpeakCount += 1;
   session.ttsAbort = new AbortController();
   session.isSpeaking = true;
+  session.sttUnblocked = false;
   session.speakingStartedAt = Date.now();
   setSessionState(session, "speaking");
 
@@ -465,7 +497,8 @@ async function speakResponseNow(
     session.speakingStartedAt = null;
     if (session.activeSpeakCount === 0) {
       session.isSpeaking = false;
-      if (session.state === "speaking") {
+      session.halfDuplexOpenAt = Date.now() + HALF_DUPLEX_TAIL_MS;
+      if (session.state === "speaking" || session.state === "tool_running") {
         setSessionState(session, "listening");
       }
     }
@@ -493,6 +526,7 @@ async function processUtterance(
   const timing = createTurnTiming(session.turnCount, Date.now());
   timing.llmStartAt = Date.now();
   setSessionState(session, "thinking");
+  void speakThinkingFiller(session, utteranceId);
 
   session.sttConfidence = sttConfidence ?? null;
   session.lowConfidenceUtterance =
@@ -655,15 +689,17 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
   };
 
   stt.onTranscript((event) => {
+    if (shouldIgnoreSttEvent(session, event)) return;
+
     if (event.speechStarted) {
       if (session.isSpeaking) {
         maybeBargeInOnSpeechStart(session);
-      } else if (session.processing) {
-        supersedeInFlightUtterance(session);
       }
+      return;
     }
 
     if (event.utteranceEnd) {
+      if (isTurnInputBlocked(session)) return;
       flushUtterance();
       return;
     }
@@ -681,9 +717,10 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
       session.pendingUtterance = `${session.pendingUtterance} ${event.text}`.trim();
       if (session.isSpeaking) {
         maybeBargeIn(session, event.text, true, event.confidence);
-      } else if (session.processing) {
+      } else if (session.state === "thinking") {
         supersedeInFlightUtterance(session);
       }
+      if (isTurnInputBlocked(session)) return;
       scheduleUtterance();
     } else if (session.isSpeaking) {
       maybeBargeIn(session, event.text, false, event.confidence);
@@ -734,6 +771,17 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
 }
 
 export function sendAudioToSession(sessionId: string, chunk: Buffer): void {
+  const session = getVoiceSession(sessionId);
+  if (session) {
+    const now = Date.now();
+    if (
+      (session.isSpeaking || session.state === "tool_running") &&
+      !session.sttUnblocked &&
+      now < session.halfDuplexOpenAt
+    ) {
+      return;
+    }
+  }
   const stt = sttBySession.get(sessionId);
   stt?.sendAudio(chunk);
 }

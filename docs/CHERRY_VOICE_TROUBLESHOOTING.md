@@ -114,6 +114,10 @@ pm2 logs cherry-voice-ai --lines 100 --nostream
 
 Look for `Inworld TTS`, `Deepgram`, `GoogleGenerativeAI`, or `[voice-session]` lines.
 
+## Future: Deepgram Flux / Voice Agent API
+
+Nova-3 + manual endpointing works but is sensitive to echo and overlapping speech. **Deepgram Flux** (conversational STT) or the **Voice Agent API** would improve turn detection and barge-in at the cost of a larger integration (new WS protocol, billing model, and orchestrator rewrite). Not in this sprint — track as P1 in `docs/CHERRY_VOICE_ROADMAP.md` if half-duplex + turn state machine still show gaps in prod.
+
 ## Still stuck?
 
 1. End call → hard refresh → new call in Chrome.

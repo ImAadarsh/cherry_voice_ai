@@ -75,6 +75,9 @@ export interface VoiceSessionRecord {
   sttLocale: string;
   processingEarconEnabled: boolean;
   postCallSmsEnabled: boolean;
+  /** User explicitly interrupted agent speech — allow STT through half-duplex gate. */
+  sttUnblocked: boolean;
+  halfDuplexOpenAt: number;
 }
 
 const sessions = new Map<string, VoiceSessionRecord>();
@@ -155,6 +158,8 @@ export function createVoiceSession(input: {
     sttLocale: input.sttLocale ?? "en-US",
     processingEarconEnabled: input.processingEarconEnabled ?? false,
     postCallSmsEnabled: input.postCallSmsEnabled ?? false,
+    sttUnblocked: false,
+    halfDuplexOpenAt: 0,
   };
   sessions.set(session.id, session);
   return session;
@@ -301,10 +306,11 @@ export function cancelInFlightTurn(session: VoiceSessionRecord): void {
 export function interruptSpeech(session: VoiceSessionRecord): void {
   session.speakGeneration += 1;
   session.activeSpeakCount = 0;
+  session.sttUnblocked = true;
   cancelPendingTts(session);
   session.isSpeaking = false;
   session.speakingStartedAt = null;
-  if (session.state === "speaking") {
+  if (session.state === "speaking" || session.state === "tool_running") {
     setSessionState(session, "listening");
   }
   emitSessionEvent(session, { type: "state", payload: { interrupted: true } });

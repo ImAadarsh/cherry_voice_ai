@@ -33,7 +33,7 @@ type TranscriptLine = {
   text: string;
 };
 
-type CallStatus = "idle" | "connecting" | "listening" | "thinking" | "speaking" | "ended";
+type CallStatus = "idle" | "connecting" | "listening" | "thinking" | "speaking" | "tool_running" | "ended";
 
 type CherryVoiceWebCallPanelProps = {
   agentId?: string;
@@ -69,6 +69,7 @@ export function CherryVoiceWebCallPanel({
   const audioFailCountRef = useRef(0);
   const earconEnabledRef = useRef(false);
   const statusRef = useRef<CallStatus>("idle");
+  const halfDuplexOpenAtRef = useRef(0);
 
   const stopPlayback = useCallback(() => {
     playbackRef.current?.stop();
@@ -128,6 +129,8 @@ export function CherryVoiceWebCallPanel({
         return "thinking";
       case "speaking":
         return "speaking";
+      case "tool_running":
+        return "tool_running";
       case "ended":
         return "ended";
       default:
@@ -156,8 +159,18 @@ export function CherryVoiceWebCallPanel({
           }
           const mapped = mapServerState(data.state);
           if (mapped) {
+            const prev = statusRef.current;
             statusRef.current = mapped;
             setStatus(mapped);
+            if (
+              mapped === "listening" &&
+              (prev === "speaking" || prev === "tool_running")
+            ) {
+              halfDuplexOpenAtRef.current = Date.now() + 100;
+            }
+            if (mapped === "speaking" || mapped === "tool_running") {
+              halfDuplexOpenAtRef.current = Number.POSITIVE_INFINITY;
+            }
           }
         } catch {
           /* ignore */
@@ -174,10 +187,14 @@ export function CherryVoiceWebCallPanel({
           if (!data.text) return;
 
           if (data.isFinal && data.role === "user") {
-            setTranscript((prev) => [
-              ...prev,
-              { id: `user-${Date.now()}`, role: "user", text: data.text! },
-            ]);
+            setTranscript((prev) => {
+              const last = prev[prev.length - 1];
+              if (last?.role === "user" && last.text === data.text) return prev;
+              return [
+                ...prev,
+                { id: `user-${Date.now()}`, role: "user", text: data.text! },
+              ];
+            });
           }
         } catch {
           /* ignore */
@@ -189,10 +206,14 @@ export function CherryVoiceWebCallPanel({
           const data = JSON.parse(ev.data) as { text?: string };
           if (data.text) {
             setAssistantText(data.text);
-            setTranscript((prev) => [
-              ...prev,
-              { id: `agent-${Date.now()}`, role: "agent", text: data.text! },
-            ]);
+            setTranscript((prev) => {
+              const last = prev[prev.length - 1];
+              if (last?.role === "agent" && last.text === data.text) return prev;
+              return [
+                ...prev,
+                { id: `agent-${Date.now()}`, role: "agent", text: data.text! },
+              ];
+            });
           }
         } catch {
           /* ignore */
@@ -294,7 +315,13 @@ export function CherryVoiceWebCallPanel({
       audioUrl: session.audio_url,
       workletUrl: WORKLET_URL,
       isActive: () => activeRef.current,
-      shouldDetectUserSpeech: () => statusRef.current === "speaking",
+      shouldDetectUserSpeech: () =>
+        statusRef.current === "speaking" || statusRef.current === "tool_running",
+      shouldUploadAudio: () => {
+        const s = statusRef.current;
+        if (s === "speaking" || s === "tool_running") return false;
+        return Date.now() >= halfDuplexOpenAtRef.current;
+      },
       onUserSpeechDetected: () => sendInterrupt(),
       onUploadFailure: () => {
         audioFailCountRef.current += 1;
@@ -362,9 +389,9 @@ export function CherryVoiceWebCallPanel({
     };
   }, [stopAudioPipeline]);
 
-  const isLive = status === "connecting" || status === "listening" || status === "thinking" || status === "speaking";
+  const isLive = status === "connecting" || status === "listening" || status === "thinking" || status === "speaking" || status === "tool_running";
   const isThinking = status === "thinking";
-  const isSpeaking = status === "speaking";
+  const isSpeaking = status === "speaking" || status === "tool_running";
 
   const statusLabel =
     status === "idle"
@@ -376,8 +403,10 @@ export function CherryVoiceWebCallPanel({
           : status === "thinking"
             ? "Thinking…"
             : status === "speaking"
-              ? "Speaking"
-              : "Ended";
+          ? "Speaking"
+          : status === "tool_running"
+            ? "Working…"
+            : "Ended";
 
   return (
     <div className={cn("space-y-4", className)}>
@@ -410,9 +439,11 @@ export function CherryVoiceWebCallPanel({
             <p className="text-xs text-muted-foreground">
               {isThinking
                 ? "Checking details — hang on a moment…"
-                : isSpeaking
-                  ? "Agent is speaking…"
-                  : "Browser voice call · Deepgram + Gemini + Inworld"}
+                : status === "tool_running"
+                  ? "Looking that up for you…"
+                  : isSpeaking
+                    ? "Agent is speaking…"
+                    : "Browser voice call · Deepgram + Gemini + Inworld"}
             </p>
           </div>
         </div>

@@ -13,6 +13,8 @@ export async function startWorkletMicCapture(opts: {
   onUserSpeechDetected?: () => void;
   /** When false, VAD callbacks are suppressed (e.g. agent not speaking). */
   shouldDetectUserSpeech?: () => boolean;
+  /** Half-duplex: when false, skip uploading mic audio to STT (still runs VAD). */
+  shouldUploadAudio?: () => boolean;
 }): Promise<{ handle: MicCaptureHandle }> {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -55,6 +57,8 @@ export async function startWorkletMicCapture(opts: {
     } else {
       vadFrames = 0;
     }
+
+    if (opts.shouldUploadAudio?.() === false) return;
 
     const down = downsample(samples, ctx.sampleRate, 16000);
     const pcm = f32ToPcm(down);

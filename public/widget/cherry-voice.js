@@ -36,6 +36,10 @@
     textOnlyMode: false,
     earconEnabled: false,
     workletNode: null,
+    halfDuplexOpenAt: 0,
+    transcriptLines: [],
+    lastAgentText: "",
+    lastUserText: "",
   };
 
   var MAX_RECONNECT_ATTEMPTS = 5;
@@ -100,11 +104,26 @@
   root.appendChild(fab);
   document.body.appendChild(root);
 
+  function renderTranscript() {
+    if (!state.transcriptLines.length) return;
+    transcriptEl.textContent = state.transcriptLines.join("\n\n");
+  }
+
+  function appendTranscriptLine(role, text) {
+    if (!text) return;
+    if (role === "user" && text === state.lastUserText) return;
+    if (role === "agent" && text === state.lastAgentText) return;
+    if (role === "user") state.lastUserText = text;
+    if (role === "agent") state.lastAgentText = text;
+    state.transcriptLines.push((role === "agent" ? "Agent: " : "You: ") + text);
+    renderTranscript();
+  }
+
   function setUiState(next) {
     state.uiState = next;
-    fab.classList.remove("listening", "thinking", "speaking");
-    statusEl.classList.remove("listening", "thinking", "speaking");
-    if (next === "listening" || next === "thinking" || next === "speaking") {
+    fab.classList.remove("listening", "thinking", "speaking", "tool_running");
+    statusEl.classList.remove("listening", "thinking", "speaking", "tool_running");
+    if (next === "listening" || next === "thinking" || next === "speaking" || next === "tool_running") {
       fab.classList.add(next);
       statusEl.classList.add(next);
     }
@@ -117,6 +136,8 @@
       setUiState(uiState);
       if (uiState === "thinking") {
         subtitle.textContent = "Checking details — hang on a moment…";
+      } else if (uiState === "tool_running") {
+        subtitle.textContent = "Looking that up for you…";
       } else if (uiState === "speaking") {
         subtitle.textContent = "Agent is speaking…";
       } else if (uiState === "listening") {
@@ -209,7 +230,7 @@
   }
 
   function detectUserSpeech(samples) {
-    if (state.uiState !== "speaking") {
+    if (state.uiState !== "speaking" && state.uiState !== "tool_running") {
       vadFrames = 0;
       return;
     }
@@ -320,6 +341,10 @@
     state.active = false;
     state.closing = false;
     state.reconnectAttempts = 0;
+    state.transcriptLines = [];
+    state.lastAgentText = "";
+    state.lastUserText = "";
+    state.halfDuplexOpenAt = 0;
     stopAudioPipeline();
     fab.classList.remove("active");
     endBtn.disabled = true;
@@ -381,11 +406,20 @@
           endCallGracefully();
           return;
         }
+        var prevUi = state.uiState;
         if (data.state === "thinking") {
           setStatus("Thinking…", "thinking");
+          state.halfDuplexOpenAt = 0;
+        } else if (data.state === "tool_running") {
+          setStatus("Working…", "tool_running");
+          state.halfDuplexOpenAt = Number.POSITIVE_INFINITY;
         } else if (data.state === "speaking") {
           setStatus("Speaking", "speaking");
+          state.halfDuplexOpenAt = Number.POSITIVE_INFINITY;
         } else if (data.state === "listening") {
+          if (prevUi === "speaking" || prevUi === "tool_running") {
+            state.halfDuplexOpenAt = Date.now() + 100;
+          }
           setStatus("Listening", "listening");
         } else if (data.state) {
           setStatus(data.state.charAt(0).toUpperCase() + data.state.slice(1));
@@ -397,14 +431,17 @@
         var data = JSON.parse(ev.data);
         if (data.text && data.isFinal) {
           state.transcript = data.text;
-          transcriptEl.textContent = data.text;
+          appendTranscriptLine("user", data.text);
         }
       } catch (e) {}
     });
     state.eventSource.addEventListener("assistant_text", function (ev) {
       try {
         var data = JSON.parse(ev.data);
-        if (data.text) transcriptEl.textContent = data.text;
+        if (data.text) {
+          state.transcript = data.text;
+          appendTranscriptLine("agent", data.text);
+        }
       } catch (e) {}
     });
     state.eventSource.addEventListener("audio", function (ev) {
@@ -488,6 +525,13 @@
           if (!state.active || !session.audio_url) return;
           if (!ev.data || ev.data.type !== "pcm" || !ev.data.samples) return;
           detectUserSpeech(ev.data.samples);
+          if (
+            state.uiState === "speaking" ||
+            state.uiState === "tool_running" ||
+            Date.now() < state.halfDuplexOpenAt
+          ) {
+            return;
+          }
           var down = downsample(ev.data.samples, state.audioContext.sampleRate, 16000);
           var pcm = floatTo16BitPCM(down);
           fetch(session.audio_url, {

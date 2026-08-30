@@ -3,6 +3,7 @@ export type VoiceSessionState =
   | "listening"
   | "thinking"
   | "speaking"
+  | "tool_running"
   | "ended"
   | "error";
 
