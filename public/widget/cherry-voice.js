@@ -20,6 +20,7 @@
   var state = {
     open: false,
     active: false,
+    closing: false,
     session: null,
     eventSource: null,
     mediaStream: null,
@@ -29,7 +30,10 @@
     nextPlayTime: 0,
     status: "Ready",
     transcript: "",
+    reconnectAttempts: 0,
   };
+
+  var MAX_RECONNECT_ATTEMPTS = 5;
 
   function injectStyles() {
     if (document.getElementById("cherry-voice-styles")) return;
@@ -176,7 +180,20 @@
     }
   }
 
+  function resetCallUi() {
+    state.session = null;
+    state.active = false;
+    state.closing = false;
+    state.reconnectAttempts = 0;
+    stopAudioPipeline();
+    fab.classList.remove("active");
+    endBtn.disabled = true;
+    startBtn.disabled = false;
+    setStatus("Ready");
+  }
+
   function closeSession() {
+    state.closing = true;
     if (state.eventSource) {
       state.eventSource.close();
       state.eventSource = null;
@@ -188,20 +205,44 @@
         body: JSON.stringify({ action: "end" }),
       }).catch(function () {});
     }
-    state.session = null;
-    state.active = false;
-    stopAudioPipeline();
-    fab.classList.remove("active");
-    endBtn.disabled = true;
-    startBtn.disabled = false;
-    setStatus("Ready");
+    setError("");
+    resetCallUi();
+  }
+
+  function endCallGracefully() {
+    state.closing = true;
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+    setError("");
+    resetCallUi();
   }
 
   function connectEvents(session) {
+    if (state.eventSource) {
+      state.eventSource.close();
+      state.eventSource = null;
+    }
+
     state.eventSource = new EventSource(session.events_url);
+
+    state.eventSource.onopen = function () {
+      if (!state.active || state.closing) return;
+      state.reconnectAttempts = 0;
+      setError("");
+      if (state.status === "Reconnecting...") {
+        setStatus("Listening");
+      }
+    };
+
     state.eventSource.addEventListener("state", function (ev) {
       try {
         var data = JSON.parse(ev.data);
+        if (data.state === "ended") {
+          endCallGracefully();
+          return;
+        }
         if (data.state) setStatus(data.state.charAt(0).toUpperCase() + data.state.slice(1));
       } catch (e) {}
     });
@@ -233,7 +274,32 @@
       } catch (e) {}
     });
     state.eventSource.onerror = function () {
-      setError("Connection lost");
+      if (state.closing || !state.active) return;
+
+      var es = state.eventSource;
+      if (!es) return;
+
+      if (es.readyState === EventSource.CONNECTING) {
+        setStatus("Reconnecting...");
+        setError("");
+        return;
+      }
+
+      if (es.readyState === EventSource.CLOSED) {
+        state.reconnectAttempts += 1;
+        if (state.reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
+          setStatus("Reconnecting...");
+          setError("");
+          setTimeout(function () {
+            if (state.active && !state.closing && state.session) {
+              connectEvents(state.session);
+            }
+          }, Math.min(1000 * state.reconnectAttempts, 5000));
+          return;
+        }
+        setError("Connection lost. Tap End, then Start call to try again.");
+        setStatus("Disconnected");
+      }
     };
   }
 

@@ -1,5 +1,5 @@
 import { sendAudioToSession } from "@/lib/voice/orchestrator";
-import { getVoiceSession } from "@/lib/voice/session-store";
+import { getVoiceSession, touchSession } from "@/lib/voice/session-store";
 import { cherryVoiceCorsHeaders, cherryVoiceFail, cherryVoiceOptionsResponse } from "@/lib/voice/widget-auth";
 
 export const runtime = "nodejs";
@@ -27,6 +27,7 @@ export async function POST(
     return cherryVoiceFail("Empty audio payload", 400);
   }
 
+  touchSession(session);
   sendAudioToSession(params.id, Buffer.from(arrayBuffer));
 
   return new Response(JSON.stringify({ ok: true }), {
