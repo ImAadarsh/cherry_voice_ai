@@ -8,21 +8,34 @@ import type {
   PaymentLinkResult,
 } from "./types";
 
+export interface StripeGatewayConfig {
+  secretKey: string;
+  webhookSecret?: string;
+}
+
 /**
  * Stripe adapter. Uses Payment Links (a hosted checkout URL) so the voice agent
  * flow can simply SMS/WhatsApp a URL to the customer.
  *
- * Requires STRIPE_SECRET_KEY and STRIPE_WEBHOOK_SECRET in the environment.
+ * Accepts per-restaurant credentials or falls back to STRIPE_SECRET_KEY /
+ * STRIPE_WEBHOOK_SECRET in the environment.
  */
 export class StripeGateway implements PaymentGateway {
   readonly provider = "stripe" as const;
   private client: Stripe;
+  private webhookSecret: string | undefined;
 
-  constructor() {
-    if (!env.STRIPE_SECRET_KEY) {
-      throw new Error("STRIPE_SECRET_KEY is not configured");
+  constructor(config?: StripeGatewayConfig) {
+    const secretKey = config?.secretKey ?? env.STRIPE_SECRET_KEY;
+    if (!secretKey) {
+      throw new Error(
+        config
+          ? "Stripe secret key is not configured for this restaurant. Add it in Settings → Payment Gateways."
+          : "STRIPE_SECRET_KEY is not configured",
+      );
     }
-    this.client = new Stripe(env.STRIPE_SECRET_KEY);
+    this.webhookSecret = config?.webhookSecret ?? env.STRIPE_WEBHOOK_SECRET;
+    this.client = new Stripe(secretKey);
   }
 
   async createPaymentLink(input: CreatePaymentLinkInput): Promise<PaymentLinkResult> {
@@ -56,7 +69,7 @@ export class StripeGateway implements PaymentGateway {
 
   async parseWebhook(rawBody: string, headers: Headers): Promise<NormalizedPaymentEvent> {
     const sig = headers.get("stripe-signature");
-    if (!sig || !env.STRIPE_WEBHOOK_SECRET) {
+    if (!sig || !this.webhookSecret) {
       throw new Error("Missing Stripe signature or webhook secret");
     }
 
@@ -64,7 +77,7 @@ export class StripeGateway implements PaymentGateway {
     const event = this.client.webhooks.constructEvent(
       rawBody,
       sig,
-      env.STRIPE_WEBHOOK_SECRET,
+      this.webhookSecret,
     );
 
     const base = {

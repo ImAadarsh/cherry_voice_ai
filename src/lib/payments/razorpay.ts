@@ -9,23 +9,38 @@ import type {
   PaymentLinkResult,
 } from "./types";
 
+export interface RazorpayGatewayConfig {
+  keyId: string;
+  keySecret: string;
+  webhookSecret?: string;
+}
+
 /**
  * Razorpay adapter using the Payment Links API. Razorpay amounts are already in
  * the smallest currency unit (paise for INR), matching our internal convention.
  *
- * Requires RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET and RAZORPAY_WEBHOOK_SECRET.
+ * Accepts per-restaurant credentials or falls back to RAZORPAY_KEY_ID /
+ * RAZORPAY_KEY_SECRET / RAZORPAY_WEBHOOK_SECRET in the environment.
  */
 export class RazorpayGateway implements PaymentGateway {
   readonly provider = "razorpay" as const;
   private client: Razorpay;
+  private webhookSecret: string | undefined;
 
-  constructor() {
-    if (!env.RAZORPAY_KEY_ID || !env.RAZORPAY_KEY_SECRET) {
-      throw new Error("RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not configured");
+  constructor(config?: RazorpayGatewayConfig) {
+    const keyId = config?.keyId ?? env.RAZORPAY_KEY_ID;
+    const keySecret = config?.keySecret ?? env.RAZORPAY_KEY_SECRET;
+    if (!keyId || !keySecret) {
+      throw new Error(
+        config
+          ? "Razorpay keys are not configured for this restaurant. Add Key ID and Key Secret in Settings → Payment Gateways."
+          : "RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET are not configured",
+      );
     }
+    this.webhookSecret = config?.webhookSecret ?? env.RAZORPAY_WEBHOOK_SECRET;
     this.client = new Razorpay({
-      key_id: env.RAZORPAY_KEY_ID,
-      key_secret: env.RAZORPAY_KEY_SECRET,
+      key_id: keyId,
+      key_secret: keySecret,
     });
   }
 
@@ -60,12 +75,12 @@ export class RazorpayGateway implements PaymentGateway {
 
   async parseWebhook(rawBody: string, headers: Headers): Promise<NormalizedPaymentEvent> {
     const signature = headers.get("x-razorpay-signature");
-    if (!signature || !env.RAZORPAY_WEBHOOK_SECRET) {
+    if (!signature || !this.webhookSecret) {
       throw new Error("Missing Razorpay signature or webhook secret");
     }
 
     const expected = crypto
-      .createHmac("sha256", env.RAZORPAY_WEBHOOK_SECRET)
+      .createHmac("sha256", this.webhookSecret)
       .update(rawBody)
       .digest("hex");
 

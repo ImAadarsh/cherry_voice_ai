@@ -2,7 +2,7 @@ import "server-only";
 import { queryOne } from "../db";
 import { env } from "../env";
 import { customerOrderPageUrl } from "../customer-page-token";
-import { getGateway } from "../payments";
+import { getGatewayForRestaurant } from "../payments";
 import { ensureOrderCustomerToken } from "../repositories/customer-pages";
 import { createPaymentRecord } from "../repositories/payments";
 import { sendSms, sendEmail, sendWhatsApp, type NotificationResult } from "../notifications";
@@ -57,7 +57,7 @@ export async function createPaymentLinkForOrder(
   if (order.total_amount <= 0) throw new Error("Order total must be greater than zero");
 
   const chosen = provider ?? (await resolveProvider(restaurantId));
-  const gateway = getGateway(chosen);
+  const gateway = await getGatewayForRestaurant(restaurantId, chosen);
   const pageToken = await ensureOrderCustomerToken(order.id);
   const customerPageUrl = customerOrderPageUrl(pageToken, env.APP_BASE_URL);
 
