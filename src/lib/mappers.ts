@@ -131,14 +131,26 @@ export function mapMenuCategoryRow(row: Record<string, unknown>): MenuCategory {
   };
 }
 
+function parseAgentConfig(row: Record<string, unknown>): Record<string, unknown> {
+  const raw = row.config;
+  if (!raw) return {};
+  if (typeof raw === "object") return raw as Record<string, unknown>;
+  try {
+    return JSON.parse(String(raw)) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
+
 export function mapAgentRow(row: Record<string, unknown>): VoiceAgent {
   const active = Boolean(row.is_active ?? true);
   const omnidimAgentId = String(row.omnidim_agent_id ?? row.id);
+  const config = parseAgentConfig(row);
   return {
     id: String(row.id),
     omnidimAgentId,
     name: String(row.name),
-    role: "Voice Agent",
+    role: config.is_primary ? "Primary voice agent" : "Voice Agent",
     status: active ? "online" : "offline",
     phoneNumber: String(row.phone_number ?? "—"),
     language: String(row.language ?? "English"),
@@ -147,6 +159,7 @@ export function mapAgentRow(row: Record<string, unknown>): VoiceAgent {
     avgDuration: 0,
     successRate: active ? 0.9 : 0,
     model: "cherry-voice",
+    isPrimary: Boolean(config.is_primary),
   };
 }
 

@@ -6,36 +6,25 @@ import { requireRestaurantId } from "@/lib/route-auth";
 import { isOmnidimConfigured } from "@/lib/platform-config";
 import { getOmnidim } from "@/lib/omnidim";
 import { listAgents, upsertAgentMapping } from "@/lib/repositories/agents";
-import { listAgentIntegrations } from "@/lib/repositories/integration-keys";
 import { sanitizePlatformError } from "@/lib/platform-errors";
-import { CHERRY_VOICE_TOOLS, provisionAgentWithIntegrations } from "@/lib/services/agent-provisioning";
+import { provisionAgentWithIntegrations } from "@/lib/services/agent-provisioning";
+import { findReusableAgent, type AgentRow } from "@/lib/services/agent-reuse";
+import { generateAgentPrompt } from "@/lib/services/onboarding-extract";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 /**
  * GET /api/agents
- * Lists voice agents. Returns the locally-mapped agents (omnidim_agents) and,
- * when an API key is configured, enriches with the live list from Omnidim.
+ * Lists voice agents for the authenticated restaurant only.
  */
 export async function GET(req: Request) {
   try {
     const restaurantId = await requireRestaurantId(req);
     if (restaurantId instanceof Response) return restaurantId;
-    const local = await listAgents(restaurantId);
+    const agents = await listAgents(restaurantId);
 
-    let live: unknown = null;
-    if (await isOmnidimConfigured()) {
-      try {
-        const omnidim = await getOmnidim();
-        const res = await omnidim.agents.list({ pagesize: 50 });
-        live = (res as { bots?: unknown })?.bots ?? res ?? null;
-      } catch {
-        live = null;
-      }
-    }
-
-    return ok({ agents: local, live, source: live ? "omnidim" : "local" });
+    return ok({ agents, source: "local" });
   } catch (err) {
     return handleRouteError(err);
   }
@@ -47,13 +36,33 @@ const createSchema = z
     phone_number: z.string().optional(),
     direction: z.enum(["inbound", "outbound", "both"]).optional(),
     config: z.record(z.string(), z.unknown()).optional(),
+    welcome_message: z.string().optional(),
+    voice_id: z.union([z.string(), z.number()]).optional(),
+    context_breakdown: z.array(z.record(z.string(), z.unknown())).optional(),
+    use_generated_prompt: z.boolean().optional(),
   })
   .passthrough();
 
+async function reuseExistingAgent(restaurantId: number, reusableAgent: AgentRow) {
+  const provisioning = await provisionAgentWithIntegrations(
+    restaurantId,
+    reusableAgent.omnidim_agent_id,
+  );
+  return ok(
+    {
+      agent: reusableAgent.config ?? { id: reusableAgent.omnidim_agent_id },
+      localId: Number(reusableAgent.id),
+      provisioning,
+      reused: true,
+    },
+    { status: 200 },
+  );
+}
+
 /**
  * POST /api/agents
- * Creates an agent via the Omnidim SDK, then stores a local mapping row so the
- * dashboard can resolve calls/orders back to this restaurant.
+ * Creates an agent via the voice platform SDK, then stores a local mapping row.
+ * Reuses a recent or incomplete agent with the same name to prevent duplicates.
  */
 export async function POST(req: Request) {
   try {
@@ -68,31 +77,32 @@ export async function POST(req: Request) {
     }
 
     const existingAgents = await listAgents(restaurantId);
-    const reusableAgent = existingAgents.find((row) => row.name === parsed.data.name);
+    const reusableAgent = await findReusableAgent(restaurantId, existingAgents, parsed.data.name);
     if (reusableAgent?.omnidim_agent_id) {
-      const integrations = await listAgentIntegrations(restaurantId, reusableAgent.omnidim_agent_id);
-      if (integrations.length < CHERRY_VOICE_TOOLS.length) {
-        console.info(
-          `[agents] Reusing existing agent ${reusableAgent.omnidim_agent_id} for restaurant ${restaurantId} (incomplete integrations)`,
-        );
-        const provisioning = await provisionAgentWithIntegrations(
-          restaurantId,
-          reusableAgent.omnidim_agent_id,
-        );
-        return ok(
-          {
-            agent: reusableAgent.config ?? { id: reusableAgent.omnidim_agent_id },
-            localId: reusableAgent.id,
-            provisioning,
-            reused: true,
-          },
-          { status: 200 },
-        );
-      }
+      console.info(
+        `[agents] Reusing existing agent ${reusableAgent.omnidim_agent_id} for restaurant ${restaurantId}`,
+      );
+      return reuseExistingAgent(restaurantId, reusableAgent);
     }
 
+    const prompt =
+      parsed.data.use_generated_prompt !== false && !parsed.data.context_breakdown?.length
+        ? await generateAgentPrompt(restaurantId)
+        : undefined;
+
+    const createPayload = {
+      ...(body ?? {}),
+      name: parsed.data.name,
+      welcome_message:
+        parsed.data.welcome_message ?? "Thanks for calling! How can I help you today?",
+      voice_id: parsed.data.voice_id,
+      context_breakdown:
+        parsed.data.context_breakdown ??
+        (prompt ? [{ title: "Instructions", body: prompt, type: "text" }] : undefined),
+    };
+
     const omnidim = await getOmnidim();
-    const created = (await omnidim.agents.create((body ?? {}) as never)) as Record<string, unknown>;
+    const created = (await omnidim.agents.create(createPayload as never)) as Record<string, unknown>;
     const omnidimAgentId =
       (created?.id as string | number | undefined) ??
       ((created?.bot as Record<string, unknown>)?.id as string | number | undefined);
@@ -107,7 +117,9 @@ export async function POST(req: Request) {
       name: parsed.data.name,
       phoneNumber: parsed.data.phone_number ?? null,
       direction: parsed.data.direction ?? "inbound",
+      voiceId: parsed.data.voice_id != null ? String(parsed.data.voice_id) : null,
       config: parsed.data.config ?? created,
+      isPrimary: existingAgents.length === 0,
     });
     const provisioning = await provisionAgentWithIntegrations(restaurantId, omnidimAgentId);
 

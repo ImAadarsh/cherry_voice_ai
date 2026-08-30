@@ -1,6 +1,6 @@
 import "server-only";
-import { omnidim } from "../omnidim";
-import { upsertAgentMapping } from "../repositories/agents";
+import { getOmnidim } from "../omnidim";
+import { listAgents, upsertAgentMapping } from "../repositories/agents";
 import { upsertCallLog } from "../repositories/calls";
 import { findAgentByOmnidimId } from "../repositories/agents";
 
@@ -25,42 +25,62 @@ type OmnidimCallLog = {
   [key: string]: unknown;
 };
 
+/** Refresh local agent rows from the voice platform — only agents already mapped to this restaurant. */
 export async function syncAgentsFromOmnidim(restaurantId: number) {
-  const res = (await omnidim.agents.list({ pagesize: 100 })) as {
-    bots?: OmnidimBot[];
-    agents?: OmnidimBot[];
-  };
-  const bots = res.bots ?? res.agents ?? (Array.isArray(res) ? res : []);
+  const localAgents = await listAgents(restaurantId);
+  if (!localAgents.length) return { synced: 0, total: 0 };
+
+  const omnidim = await getOmnidim();
   let synced = 0;
-  for (const bot of bots) {
-    if (bot.id == null) continue;
-    await upsertAgentMapping({
-      restaurantId,
-      omnidimAgentId: String(bot.id),
-      name: bot.name ?? `Agent ${bot.id}`,
-      phoneNumber: bot.phone_number ?? null,
-      direction: (bot.direction as "inbound" | "outbound" | "both") ?? "inbound",
-      config: bot,
-    });
-    synced++;
+
+  for (const local of localAgents) {
+    if (!local.omnidim_agent_id) continue;
+    try {
+      const bot = (await omnidim.agents.get(local.omnidim_agent_id)) as OmnidimBot;
+      await upsertAgentMapping({
+        restaurantId,
+        omnidimAgentId: String(local.omnidim_agent_id),
+        name: bot.name ?? local.name,
+        phoneNumber: bot.phone_number ?? local.phone_number ?? null,
+        direction:
+          (bot.direction as "inbound" | "outbound" | "both") ??
+          (local.direction as "inbound" | "outbound" | "both") ??
+          "inbound",
+        voiceId: local.voice_id ? String(local.voice_id) : null,
+        config: bot,
+      });
+      synced++;
+    } catch {
+      // Agent may have been deleted remotely; keep local row until user removes it.
+    }
   }
-  return { synced, total: bots.length };
+
+  return { synced, total: localAgents.length };
 }
 
 export async function syncCallsFromOmnidim(restaurantId: number, pagesize = 50) {
+  const localAgents = await listAgents(restaurantId);
+  const allowedAgentIds = new Set(localAgents.map((a) => String(a.omnidim_agent_id)));
+
+  const omnidim = await getOmnidim();
   const res = (await omnidim.calls.listLogs({ pagesize })) as {
     logs?: OmnidimCallLog[];
     data?: OmnidimCallLog[];
   };
   const logs = res.logs ?? res.data ?? (Array.isArray(res) ? res : []);
   let synced = 0;
+
   for (const log of logs) {
     if (log.id == null) continue;
+    if (log.agent_id != null && !allowedAgentIds.has(String(log.agent_id))) continue;
+
     let agentId: number | null = null;
     if (log.agent_id != null) {
       const mapping = await findAgentByOmnidimId(String(log.agent_id));
-      agentId = mapping?.id ?? null;
+      if (!mapping || mapping.restaurant_id !== restaurantId) continue;
+      agentId = mapping.id;
     }
+
     await upsertCallLog({
       restaurantId,
       agentId,
@@ -75,6 +95,7 @@ export async function syncCallsFromOmnidim(restaurantId: number, pagesize = 50) 
     });
     synced++;
   }
+
   return { synced, total: logs.length };
 }
 

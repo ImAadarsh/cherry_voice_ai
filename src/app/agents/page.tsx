@@ -14,9 +14,14 @@ import {
   FlaskConical,
   Mic2,
   Headphones,
+  Plus,
+  Pencil,
+  Trash2,
+  Star,
 } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { OmnidimSyncButton } from "@/components/omnidim/omnidim-sync-button";
+import { AgentFormDialog } from "@/components/agents/agent-form-dialog";
 import { CallDetailDrawer } from "@/components/calls/call-detail-drawer";
 import { WebCallDialog } from "@/components/omnidim/web-call-dialog";
 import { Button } from "@/components/ui/button";
@@ -34,6 +39,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -79,6 +85,64 @@ export default function AgentsPage() {
   const [selectedCall, setSelectedCall] = useState<CallLog | null>(null);
   const [webCallFor, setWebCallFor] = useState<VoiceAgent | null>(null);
   const [demoCallFor, setDemoCallFor] = useState<VoiceAgent | null>(null);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editAgent, setEditAgent] = useState<VoiceAgent | null>(null);
+  const [deleteAgent, setDeleteAgent] = useState<VoiceAgent | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async () => {
+    if (!deleteAgent) return;
+    setDeleting(true);
+    try {
+      await api.delete(`/api/agents/${deleteAgent.omnidimAgentId}`);
+      toast.success(`Deleted ${deleteAgent.name}`);
+      setDeleteAgent(null);
+      refetch();
+      refetchCalls();
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleSetPrimary = async (agent: VoiceAgent) => {
+    try {
+      await api.patch(`/api/agents/${agent.omnidimAgentId}`, { is_primary: true });
+      toast.success(`${agent.name} is now your primary agent`);
+      refetch();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  const handleCleanupDuplicates = async () => {
+    try {
+      const preview = await api.post<{ toDelete: Array<{ id: number; name: string }> }>(
+        "/api/agents/duplicates",
+        { dryRun: true },
+      );
+      if (!preview.toDelete?.length) {
+        toast.info("No duplicate agents found");
+        return;
+      }
+      const res = await api.post<{ deleted: number[] }>("/api/agents/duplicates", {});
+      toast.success(`Removed ${res.deleted?.length ?? 0} duplicate agent(s)`);
+      refetch();
+    } catch (e) {
+      toast.error((e as Error).message);
+    }
+  };
+
+  const openCreate = () => {
+    setEditAgent(null);
+    setFormOpen(true);
+  };
+
+  const openEdit = (agent: VoiceAgent) => {
+    setEditAgent(agent);
+    setFormOpen(true);
+  };
 
   const columns = useMemo<ColumnDef<VoiceAgent>[]>(
     () => [
@@ -91,7 +155,14 @@ export default function AgentsPage() {
               <Bot className="h-4 w-4" />
             </div>
             <div>
-              <p className="font-semibold">{row.original.name}</p>
+              <p className="font-semibold">
+                {row.original.name}
+                {row.original.isPrimary ? (
+                  <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">
+                    Primary
+                  </span>
+                ) : null}
+              </p>
               <p className="text-xs font-medium text-muted-foreground">
                 {row.original.role}
               </p>
@@ -148,6 +219,22 @@ export default function AgentsPage() {
               <DropdownMenuItem onClick={() => setDemoCallFor(row.original)}>
                 <Headphones className="mr-2 h-4 w-4" /> Demo call
               </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => openEdit(row.original)}>
+                <Pencil className="mr-2 h-4 w-4" /> Edit agent
+              </DropdownMenuItem>
+              {!row.original.isPrimary && (
+                <DropdownMenuItem onClick={() => void handleSetPrimary(row.original)}>
+                  <Star className="mr-2 h-4 w-4" /> Set as primary
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive"
+                onClick={() => setDeleteAgent(row.original)}
+              >
+                <Trash2 className="mr-2 h-4 w-4" /> Delete agent
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
               <DropdownMenuItem asChild>
                 <Link href="/phone-numbers">
                   <Settings2 className="mr-2 h-4 w-4" /> Phone numbers
@@ -179,8 +266,21 @@ export default function AgentsPage() {
         title="Voice Agents"
         description="Your voice agents, live status and call activity."
       >
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" className="gap-2 font-semibold" onClick={openCreate}>
+            <Plus className="h-4 w-4" /> New agent
+          </Button>
           <OmnidimSyncButton onSynced={handleSynced} />
+          {agents.length > 1 && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="gap-2 font-semibold"
+              onClick={() => void handleCleanupDuplicates()}
+            >
+              <Trash2 className="h-4 w-4" /> Clean duplicates
+            </Button>
+          )}
           <Button
             size="sm"
             variant="outline"
@@ -234,7 +334,7 @@ export default function AgentsPage() {
               searchKey="name"
               searchPlaceholder="Search agents…"
               emptyTitle="No agents"
-              emptyDescription="Sync agents to load your voice agents."
+              emptyDescription="Create your first voice agent to get started."
               pageSize={10}
               mobileCard={(a) => (
                 <Card className="p-4">
@@ -342,6 +442,37 @@ export default function AgentsPage() {
         agentName={demoCallFor?.name}
         mode="demo"
       />
+
+      <AgentFormDialog
+        open={formOpen}
+        onOpenChange={setFormOpen}
+        mode={editAgent ? "edit" : "create"}
+        agent={editAgent}
+        onSaved={() => {
+          refetch();
+          refetchCalls();
+        }}
+      />
+
+      <Dialog open={!!deleteAgent} onOpenChange={(open) => !open && setDeleteAgent(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete {deleteAgent?.name}?</DialogTitle>
+            <DialogDescription>
+              This permanently removes the agent from Cherry Voice AI and the voice platform.
+              Call history is kept, but this agent can no longer receive calls.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteAgent(null)} disabled={deleting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" disabled={deleting} onClick={() => void handleDelete()}>
+              Delete agent
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -66,24 +66,143 @@ export async function upsertAgentMapping(input: {
   name: string;
   phoneNumber?: string | null;
   direction?: "inbound" | "outbound" | "both";
+  voiceId?: string | null;
   config?: unknown;
+  isPrimary?: boolean;
 }): Promise<number> {
+  let config = input.config;
+  if (input.isPrimary != null) {
+    const base =
+      config && typeof config === "object"
+        ? { ...(config as Record<string, unknown>) }
+        : {};
+    base.is_primary = input.isPrimary;
+    config = base;
+  }
+
   const [res] = await pool.query<ResultSetHeader>(
     `INSERT INTO omnidim_agents
-       (restaurant_id, omnidim_agent_id, name, phone_number, direction, config, last_synced_at)
-     VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       (restaurant_id, omnidim_agent_id, name, phone_number, direction, voice_id, config, last_synced_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON DUPLICATE KEY UPDATE
        name = VALUES(name), phone_number = VALUES(phone_number),
-       direction = VALUES(direction), config = VALUES(config),
-       last_synced_at = CURRENT_TIMESTAMP`,
+       direction = VALUES(direction), voice_id = COALESCE(VALUES(voice_id), voice_id),
+       config = VALUES(config), last_synced_at = CURRENT_TIMESTAMP`,
     [
       input.restaurantId,
       String(input.omnidimAgentId),
       input.name,
       input.phoneNumber ?? null,
       input.direction ?? "inbound",
-      input.config ? JSON.stringify(input.config) : null,
+      input.voiceId ?? null,
+      config ? JSON.stringify(config) : null,
     ],
   );
   return res.insertId;
+}
+
+export async function updateAgentMapping(
+  restaurantId: number,
+  localId: number,
+  input: {
+    name?: string;
+    phoneNumber?: string | null;
+    voiceId?: string | null;
+    config?: unknown;
+    isActive?: boolean;
+  },
+): Promise<boolean> {
+  const sets: string[] = [];
+  const params: unknown[] = [];
+
+  if (input.name != null) {
+    sets.push("name = ?");
+    params.push(input.name);
+  }
+  if (input.phoneNumber !== undefined) {
+    sets.push("phone_number = ?");
+    params.push(input.phoneNumber);
+  }
+  if (input.voiceId !== undefined) {
+    sets.push("voice_id = ?");
+    params.push(input.voiceId);
+  }
+  if (input.config !== undefined) {
+    sets.push("config = ?");
+    params.push(input.config ? JSON.stringify(input.config) : null);
+  }
+  if (input.isActive !== undefined) {
+    sets.push("is_active = ?");
+    params.push(input.isActive ? 1 : 0);
+  }
+
+  if (!sets.length) return false;
+
+  sets.push("updated_at = CURRENT_TIMESTAMP");
+  params.push(restaurantId, localId);
+
+  const [res] = await pool.query<ResultSetHeader>(
+    `UPDATE omnidim_agents SET ${sets.join(", ")} WHERE restaurant_id = ? AND id = ?`,
+    params,
+  );
+  return res.affectedRows > 0;
+}
+
+export async function deleteAgentMapping(restaurantId: number, localId: number): Promise<boolean> {
+  const [res] = await pool.query<ResultSetHeader>(
+    "DELETE FROM omnidim_agents WHERE restaurant_id = ? AND id = ?",
+    [restaurantId, localId],
+  );
+  return res.affectedRows > 0;
+}
+
+export async function deleteAgentIntegrations(restaurantId: number, omnidimAgentId: string) {
+  await pool.query<ResultSetHeader>(
+    "DELETE FROM omnidim_agent_integrations WHERE restaurant_id = ? AND omnidim_agent_id = ?",
+    [restaurantId, String(omnidimAgentId)],
+  );
+}
+
+/** Mark one agent as primary and clear the flag on siblings for this restaurant. */
+export async function setPrimaryAgent(restaurantId: number, localId: number): Promise<boolean> {
+  const agents = await listAgents(restaurantId);
+  const target = agents.find((a) => Number(a.id) === localId);
+  if (!target) return false;
+
+  for (const agent of agents) {
+    const config =
+      agent.config && typeof agent.config === "object"
+        ? { ...(agent.config as Record<string, unknown>) }
+        : agent.config
+          ? (JSON.parse(String(agent.config)) as Record<string, unknown>)
+          : {};
+    config.is_primary = Number(agent.id) === localId;
+    await pool.query<ResultSetHeader>(
+      "UPDATE omnidim_agents SET config = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND restaurant_id = ?",
+      [JSON.stringify(config), agent.id, restaurantId],
+    );
+  }
+  return true;
+}
+
+/** List agent names that appear more than once for a restaurant. */
+export async function listDuplicateAgentNames(restaurantId: number) {
+  return query<{ name: string; count: number }>(
+    `SELECT name, COUNT(*) AS count
+       FROM omnidim_agents
+      WHERE restaurant_id = ?
+      GROUP BY name
+     HAVING COUNT(*) > 1
+      ORDER BY count DESC, name ASC`,
+    [restaurantId],
+  );
+}
+
+export async function listAgentsByName(restaurantId: number, name: string) {
+  return query(
+    `SELECT * FROM omnidim_agents
+      WHERE restaurant_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?))
+      ORDER BY created_at DESC`,
+    [restaurantId, name],
+  );
 }

@@ -93,6 +93,7 @@ export interface VoiceAgent {
   avgDuration: number;
   successRate: number;
   model: string;
+  isPrimary?: boolean;
 }
 
 export type CallOutcome =

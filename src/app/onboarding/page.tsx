@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
@@ -22,6 +22,7 @@ import {
   FileText,
   Globe,
   Loader2,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -102,6 +103,9 @@ export default function OnboardingPage() {
   const [selectedPhone, setSelectedPhone] = useState("");
   const [createdAgentId, setCreatedAgentId] = useState<string | null>(null);
   const [restaurantId, setRestaurantId] = useState<number | null>(null);
+  const [generatingPrompt, setGeneratingPrompt] = useState(false);
+  const creatingAgent = useRef(false);
+  const promptGenerated = useRef(false);
 
   const stepIndex = STEPS.findIndex((s) => s.id === step);
   const progress = ((stepIndex + 1) / STEPS.length) * 100;
@@ -235,18 +239,23 @@ export default function OnboardingPage() {
     }
   };
 
-  const handleGeneratePrompt = async () => {
-    setBusy(true);
+  const handleGeneratePrompt = useCallback(async () => {
+    setGeneratingPrompt(true);
     try {
       const res = await api.post<{ prompt: string }>("/api/onboarding/agent/generate-prompt");
       setAgentPrompt(res.prompt);
-      toast.success("Agent prompt generated from your restaurant data");
+      promptGenerated.current = true;
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
-      setBusy(false);
+      setGeneratingPrompt(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (step !== "agent" || promptGenerated.current || agentPrompt) return;
+    void handleGeneratePrompt();
+  }, [step, agentPrompt, handleGeneratePrompt]);
 
   const handleMenuExtract = async (save = false) => {
     if (!menuText.trim() && menuImages.length === 0 && !menuPdf && !websiteUrl.trim()) {
@@ -278,29 +287,37 @@ export default function OnboardingPage() {
       toast.error("Agent name is required");
       return;
     }
+    if (busy || creatingAgent.current || createdAgentId) {
+      if (createdAgentId) next();
+      return;
+    }
+
+    creatingAgent.current = true;
     setBusy(true);
     try {
       const prompt =
         agentPrompt ||
         AGENT_PROMPT.replace("{{restaurant_name}}", account.restaurantName || "your restaurant");
-      const res = await api.post<{ agent: { id?: string | number }; localId?: number }>(
-        "/api/agents",
-        {
-          name: agentName,
-          welcome_message: `Thanks for calling ${account.restaurantName || "us"}! How can I help you today?`,
-          context_breakdown: [{ title: "Instructions", body: prompt, type: "text" }],
-          voice_id: selectedVoice || undefined,
-        },
-      );
+      const res = await api.post<{
+        agent: { id?: string | number };
+        localId?: number;
+        reused?: boolean;
+      }>("/api/agents", {
+        name: agentName.trim(),
+        welcome_message: `Thanks for calling ${account.restaurantName || "us"}! How can I help you today?`,
+        context_breakdown: [{ title: "Instructions", body: prompt, type: "text" }],
+        voice_id: selectedVoice || undefined,
+        use_generated_prompt: false,
+      });
       const id = res.agent?.id ?? res.localId;
       setCreatedAgentId(id != null ? String(id) : null);
-      await api.post("/api/omnidim/sync");
-      toast.success("Voice agent created");
+      toast.success(res.reused ? "Using your existing agent" : "Voice agent created");
       next();
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setBusy(false);
+      creatingAgent.current = false;
     }
   };
 
@@ -657,22 +674,52 @@ export default function OnboardingPage() {
                   <>
                     <div className="space-y-2">
                       <Label>Agent name</Label>
-                      <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} />
-                    </div>
-                    <Button variant="outline" size="sm" onClick={handleGeneratePrompt} disabled={busy}>
-                      <Sparkles className="mr-2 h-4 w-4" /> Generate prompt from menu & profile
-                    </Button>
-                    <div className="space-y-2">
-                      <Label>Agent prompt (preview)</Label>
-                      <Textarea
-                        rows={8}
-                        className="bg-muted/40 font-mono text-xs"
-                        value={
-                          agentPrompt ||
-                          AGENT_PROMPT.replace("{{restaurant_name}}", account.restaurantName || "your restaurant")
-                        }
-                        onChange={(e) => setAgentPrompt(e.target.value)}
+                      <Input
+                        value={agentName}
+                        onChange={(e) => setAgentName(e.target.value)}
+                        disabled={busy}
                       />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Label>Agent prompt</Label>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1 text-xs"
+                          onClick={() => void handleGeneratePrompt()}
+                          disabled={busy || generatingPrompt}
+                        >
+                          {generatingPrompt ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-3 w-3" />
+                          )}
+                          Regenerate
+                        </Button>
+                      </div>
+                      {generatingPrompt && !agentPrompt ? (
+                        <div className="flex items-center gap-2 rounded-lg border bg-muted/30 px-3 py-6 text-sm text-muted-foreground">
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                          Generating prompt from your menu and profile…
+                        </div>
+                      ) : (
+                        <Textarea
+                          rows={8}
+                          className="bg-muted/40 font-mono text-xs"
+                          value={
+                            agentPrompt ||
+                            AGENT_PROMPT.replace("{{restaurant_name}}", account.restaurantName || "your restaurant")
+                          }
+                          onChange={(e) => setAgentPrompt(e.target.value)}
+                          disabled={busy}
+                        />
+                      )}
+                      <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Sparkles className="h-3 w-3" />
+                        Auto-filled from your restaurant data. Edit as needed.
+                      </p>
                     </div>
                   </>
                 )}
@@ -767,8 +814,9 @@ export default function OnboardingPage() {
             </Button>
           )}
           {step === "agent" && (
-            <Button onClick={handleCreateAgent} disabled={busy}>
-              Create agent <ChevronRight className="ml-1 h-4 w-4" />
+            <Button onClick={handleCreateAgent} disabled={busy || generatingPrompt}>
+              {busy ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              {createdAgentId ? "Continue" : "Create agent"} <ChevronRight className="ml-1 h-4 w-4" />
             </Button>
           )}
           {step === "phone" && (
