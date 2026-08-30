@@ -11,6 +11,7 @@ type DeepgramMessage = {
 };
 
 const MAX_RECONNECTS = 3;
+const KEEPALIVE_INTERVAL_MS = 8_000;
 
 export function createDeepgramSttProvider(options?: {
   language?: string;
@@ -26,6 +27,26 @@ export function createDeepgramSttProvider(options?: {
   let disconnectHandler: (() => void) | null = null;
   let closed = false;
   let reconnects = 0;
+  let keepaliveTimer: ReturnType<typeof setInterval> | null = null;
+
+  const clearKeepalive = () => {
+    if (keepaliveTimer) {
+      clearInterval(keepaliveTimer);
+      keepaliveTimer = null;
+    }
+  };
+
+  const startKeepalive = () => {
+    clearKeepalive();
+    keepaliveTimer = setInterval(() => {
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      try {
+        ws.send(JSON.stringify({ type: "KeepAlive" }));
+      } catch {
+        /* socket may be closing */
+      }
+    }, KEEPALIVE_INTERVAL_MS);
+  };
 
   const emitError = (err: Error) => {
     errorHandler?.(err);
@@ -58,14 +79,19 @@ export function createDeepgramSttProvider(options?: {
     socket.onerror = () => emitError(new Error("Deepgram connection error"));
 
     socket.onclose = () => {
+      clearKeepalive();
       if (closed) return;
-      disconnectHandler?.();
+
       if (reconnects < MAX_RECONNECTS) {
         reconnects += 1;
-        void openSocket().catch((err) => emitError(err instanceof Error ? err : new Error(String(err))));
-      } else {
-        emitError(new Error("Deepgram connection closed"));
+        void openSocket().catch((err) => {
+          emitError(err instanceof Error ? err : new Error(String(err)));
+        });
+        return;
       }
+
+      disconnectHandler?.();
+      emitError(new Error("Deepgram connection closed"));
     };
   };
 
@@ -94,6 +120,7 @@ export function createDeepgramSttProvider(options?: {
       if (!ws) return reject(new Error("WebSocket not initialized"));
       ws.onopen = () => {
         reconnects = 0;
+        startKeepalive();
         resolve();
       };
       ws.onerror = () => reject(new Error("Deepgram connection failed"));
@@ -126,6 +153,7 @@ export function createDeepgramSttProvider(options?: {
 
     close() {
       closed = true;
+      clearKeepalive();
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: "CloseStream" }));
         ws.close();

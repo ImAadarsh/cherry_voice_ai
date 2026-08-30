@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api-client";
 import { PcmPlaybackQueue } from "@/lib/voice/client-audio";
 import { playProcessingEarcon, startWorkletMicCapture } from "@/lib/voice/client-mic-capture";
+import { sanitizeVoiceError } from "@/lib/voice/user-errors";
 import { cn } from "@/lib/utils";
 
 type CherryVoiceSession = {
@@ -52,7 +53,7 @@ export function CherryVoiceWebCallPanel({
 }: CherryVoiceWebCallPanelProps) {
   const [status, setStatus] = useState<CallStatus>("idle");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [voiceNotice, setVoiceNotice] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
   const [assistantText, setAssistantText] = useState("");
   const [textOnlyMode, setTextOnlyMode] = useState(false);
@@ -216,9 +217,12 @@ export function CherryVoiceWebCallPanel({
         try {
           const data = JSON.parse(ev.data) as { message?: string };
           setTextOnlyMode(true);
-          if (data.message) setNetworkWarning(data.message);
+          const msg = data.message ?? "Audio unavailable — read the live transcript below.";
+          setNetworkWarning(msg);
+          setVoiceNotice(msg);
         } catch {
           setTextOnlyMode(true);
+          setVoiceNotice("Audio unavailable — read the live transcript below.");
         }
       });
 
@@ -255,21 +259,16 @@ export function CherryVoiceWebCallPanel({
         }
       });
 
-      es.addEventListener("text_only_mode", (ev) => {
-        try {
-          const data = JSON.parse((ev as MessageEvent).data) as { message?: string };
-          if (data.message) setError(data.message);
-        } catch {
-          /* ignore */
-        }
-      });
-
       es.addEventListener("error", (ev: Event) => {
         try {
           const msg = ev as MessageEvent;
           const data = JSON.parse(msg.data) as { message?: string; recoverable?: boolean };
-          if (!data.recoverable) {
-            setError(data.message ?? "Voice error");
+          const friendly = sanitizeVoiceError(data.message);
+          if (!friendly) return;
+          if (data.recoverable) {
+            setNetworkWarning(friendly);
+          } else {
+            setVoiceNotice(friendly);
           }
         } catch {
           /* ignore */
@@ -279,7 +278,7 @@ export function CherryVoiceWebCallPanel({
       es.onerror = () => {
         if (closingRef.current || !activeRef.current) return;
         if (es.readyState === EventSource.CLOSED) {
-          setError("Connection lost. End the call and try again.");
+          setVoiceNotice("Connection lost. End the call and try again.");
         }
       };
     },
@@ -309,7 +308,7 @@ export function CherryVoiceWebCallPanel({
   const startCall = useCallback(async () => {
     if (busy || activeRef.current) return;
     setBusy(true);
-    setError(null);
+    setVoiceNotice(null);
     setTranscript([]);
     setAssistantText("");
     setTextOnlyMode(false);
@@ -339,8 +338,8 @@ export function CherryVoiceWebCallPanel({
       stopAudioPipeline();
       sessionRef.current = null;
       setStatus("idle");
-      const message = (e as Error).message;
-      setError(message);
+      const message = sanitizeVoiceError((e as Error).message);
+      setVoiceNotice(message);
       toast.error(message);
     } finally {
       setBusy(false);
@@ -415,10 +414,10 @@ export function CherryVoiceWebCallPanel({
         </Badge>
       </div>
 
-      {error && (
+      {voiceNotice && (
         <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span>{error}</span>
+          <span>{voiceNotice}</span>
         </div>
       )}
 

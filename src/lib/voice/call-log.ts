@@ -8,6 +8,28 @@ import {
 } from "@/lib/repositories/calls";
 import type { TurnMetricEntry } from "@/lib/repositories/calls";
 import type { VoiceSessionRecord } from "./session-store";
+import { voiceErrorDedupKey } from "./user-errors";
+
+const ERROR_DEDUP_MS = 60_000;
+const errorDedupBySession = new WeakMap<VoiceSessionRecord, Map<string, number>>();
+
+function shouldLogVoiceError(
+  session: VoiceSessionRecord,
+  kind: "tts" | "stt",
+  error: string,
+): boolean {
+  let map = errorDedupBySession.get(session);
+  if (!map) {
+    map = new Map();
+    errorDedupBySession.set(session, map);
+  }
+  const key = voiceErrorDedupKey(kind, error);
+  const now = Date.now();
+  const last = map.get(key) ?? 0;
+  if (now - last < ERROR_DEDUP_MS) return false;
+  map.set(key, now);
+  return true;
+}
 
 export async function initCherryVoiceCallLog(session: VoiceSessionRecord): Promise<void> {
   if (session.callLogId) return;
@@ -71,6 +93,8 @@ export async function logCherryVoiceTtsError(
   error: string,
   text?: string,
 ): Promise<void> {
+  if (!shouldLogVoiceError(session, "tts", error)) return;
+
   const entry = {
     name: "tts_error",
     args: { text: text?.slice(0, 200) ?? null },
@@ -85,6 +109,8 @@ export async function logCherryVoiceTtsError(
 }
 
 export async function logCherryVoiceSttError(session: VoiceSessionRecord, error: string): Promise<void> {
+  if (!shouldLogVoiceError(session, "stt", error)) return;
+
   const entry = {
     name: "stt_error",
     args: {},

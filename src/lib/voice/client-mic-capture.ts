@@ -9,6 +9,9 @@ export async function startWorkletMicCapture(opts: {
 }): Promise<{ handle: MicCaptureHandle }> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const ctx = new AudioContext();
+  if (ctx.state === "suspended") {
+    await ctx.resume();
+  }
   await ctx.audioWorklet.addModule(opts.workletUrl);
   const src = ctx.createMediaStreamSource(stream);
   const node = new AudioWorkletNode(ctx, "pcm-capture-processor");

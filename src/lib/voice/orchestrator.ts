@@ -44,6 +44,7 @@ import {
   type TurnTiming,
 } from "./turn-metrics";
 import { executeCherryVoiceTool } from "./tools";
+import { sanitizeVoiceError } from "./user-errors";
 
 const sttBySession = new Map<string, ReturnType<typeof createDeepgramSttProvider>>();
 const llm = createGeminiLlmProvider();
@@ -278,7 +279,7 @@ async function speakResponse(
       await logCherryVoiceTtsError(session, errMsg, text);
       emitSessionEvent(session, {
         type: "error",
-        payload: { message: errMsg, recoverable: true },
+        payload: { message: sanitizeVoiceError(errMsg), recoverable: true },
       });
 
       const fallback = await getTtsFallbackPhrase(session.restaurantId);
@@ -301,7 +302,7 @@ async function speakResponse(
       session.failed = true;
       emitSessionEvent(session, {
         type: "error",
-        payload: { message, recoverable: true },
+        payload: { message: sanitizeVoiceError(message), recoverable: true },
       });
       const fallback = await getTtsFallbackPhrase(session.restaurantId);
       await emitTtsFallback(session, text);
@@ -361,7 +362,7 @@ async function processUtterance(
     session.failed = true;
     emitSessionEvent(session, {
       type: "error",
-      payload: { message: (err as Error).message },
+      payload: { message: sanitizeVoiceError((err as Error).message) },
     });
     setSessionState(session, "listening");
   } finally {
@@ -467,11 +468,17 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
   stt.onError((err) => {
     session.failed = true;
     void logCherryVoiceSttError(session, err.message);
-    emitSessionEvent(session, { type: "error", payload: { message: err.message } });
+    const friendly = sanitizeVoiceError(err.message);
+    if (friendly) {
+      emitSessionEvent(session, { type: "error", payload: { message: friendly, recoverable: true } });
+    }
   });
 
   stt.onDisconnect?.(() => {
-    void logCherryVoiceSttError(session, "Deepgram disconnected — reconnecting");
+    emitSessionEvent(session, {
+      type: "network_warning",
+      payload: { message: "Connection interrupted — trying to recover. You can keep speaking." },
+    });
   });
 
   await stt.connect();

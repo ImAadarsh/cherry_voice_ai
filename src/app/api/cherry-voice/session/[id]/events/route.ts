@@ -2,6 +2,7 @@ import {
   getVoiceSession,
   subscribeSession,
 } from "@/lib/voice/session-store";
+import { stopVoiceOrchestrator } from "@/lib/voice/orchestrator";
 import type { VoiceSessionEvent } from "@/lib/voice/providers/types";
 import { cherryVoiceCorsHeaders, cherryVoiceFail, cherryVoiceOptionsResponse } from "@/lib/voice/widget-auth";
 
@@ -11,6 +12,7 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 3600;
 
 const KEEPALIVE_MS = 15_000;
+const DISCONNECT_GRACE_MS = 8_000;
 
 export async function OPTIONS() {
   return cherryVoiceOptionsResponse();
@@ -28,6 +30,17 @@ export async function GET(
 
   const encoder = new TextEncoder();
   let cleanup: (() => void) | null = null;
+  let endTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const scheduleEndIfIdle = () => {
+    if (endTimer) clearTimeout(endTimer);
+    endTimer = setTimeout(() => {
+      const live = getVoiceSession(params.id);
+      if (live && live.state !== "ended" && live.subscribers.size === 0) {
+        void stopVoiceOrchestrator(params.id);
+      }
+    }, DISCONNECT_GRACE_MS);
+  };
 
   const stream = new ReadableStream({
     start(controller) {
@@ -89,6 +102,7 @@ export async function GET(
     },
     cancel() {
       cleanup?.();
+      scheduleEndIfIdle();
     },
   });
 
