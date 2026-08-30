@@ -349,7 +349,6 @@
         var data = JSON.parse(ev.data);
         if (data.interrupted) {
           stopPlayback();
-          sendInterrupt();
         }
         if (data.state === "ended") {
           endCallGracefully();

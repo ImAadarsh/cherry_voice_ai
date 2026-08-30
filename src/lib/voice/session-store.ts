@@ -257,11 +257,17 @@ export function stopCallDurationMonitor(session: VoiceSessionRecord): void {
   }
 }
 
-export function interruptSpeech(session: VoiceSessionRecord): void {
+/** Abort in-flight TTS without notifying the client (used between speak segments). */
+export function cancelPendingTts(session: VoiceSessionRecord): void {
   if (session.ttsAbort) {
     session.ttsAbort.abort();
     session.ttsAbort = null;
   }
+}
+
+/** User barge-in: abort TTS and tell the client to stop playback. */
+export function interruptSpeech(session: VoiceSessionRecord): void {
+  cancelPendingTts(session);
   session.isSpeaking = false;
   if (session.state === "speaking") {
     setSessionState(session, "listening");

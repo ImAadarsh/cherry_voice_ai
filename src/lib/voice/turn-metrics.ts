@@ -11,6 +11,7 @@ export type TurnTiming = {
   toolEndAt: number;
   ttsStartAt: number;
   firstAudioAt: number | null;
+  audioFallbackEmitted?: boolean;
 };
 
 export function createTurnTiming(turn: number, sttFinalAt: number): TurnTiming {

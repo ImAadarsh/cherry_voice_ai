@@ -5,6 +5,8 @@ export interface InworldVoiceOption {
   description?: string;
 }
 
+export const DEFAULT_INWORLD_VOICE = "Sarah";
+
 export const INWORLD_VOICES: InworldVoiceOption[] = [
   { id: "Sarah", label: "Sarah", description: "Warm, friendly female" },
   { id: "Ashley", label: "Ashley", description: "Professional female" },
@@ -20,4 +22,11 @@ export const INWORLD_VOICES: InworldVoiceOption[] = [
 export function isValidInworldVoice(voiceId: string): boolean {
   const trimmed = voiceId.trim();
   return trimmed.length > 0 && trimmed.length <= 200;
+}
+
+/** Normalize voice id before session start; falls back to default when missing or invalid. */
+export function resolveInworldVoiceId(voiceId: string | null | undefined): string {
+  const trimmed = (voiceId ?? "").trim();
+  if (!isValidInworldVoice(trimmed)) return DEFAULT_INWORLD_VOICE;
+  return trimmed;
 }

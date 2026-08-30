@@ -8,6 +8,7 @@ import {
   enableTextOnlyMode,
   getVoiceSession,
   interruptSpeech,
+  cancelPendingTts,
   recordBargeIn,
   setSessionState,
   startCallDurationMonitor,
@@ -45,6 +46,7 @@ import {
 } from "./turn-metrics";
 import { executeCherryVoiceTool } from "./tools";
 import { sanitizeVoiceError } from "./user-errors";
+import { resolveInworldVoiceId } from "./inworld-voices";
 
 const sttBySession = new Map<string, ReturnType<typeof createDeepgramSttProvider>>();
 const llm = createGeminiLlmProvider();
@@ -54,12 +56,21 @@ const SILENCE_CHECK_MS = 10_000;
 const SILENCE_PROMPT_AFTER_MS = 45_000;
 const TTS_FLASH_MODEL = "inworld-tts-2-flash";
 const LOW_STT_CONFIDENCE = 0.55;
+const TTS_RETRY_MAX_CHARS = 240;
 
 type SpeakOptions = {
   skipTranscriptLog?: boolean;
   modelId?: string;
   timing?: TurnTiming | null;
 };
+
+function truncateForTtsRetry(text: string): string {
+  const trimmed = text.trim();
+  if (trimmed.length <= TTS_RETRY_MAX_CHARS) return trimmed;
+  const slice = trimmed.slice(0, TTS_RETRY_MAX_CHARS);
+  const lastSpace = slice.lastIndexOf(" ");
+  return (lastSpace > 80 ? slice.slice(0, lastSpace) : slice).trim();
+}
 
 function sessionMessagesToLlm(
   messages: VoiceSessionRecord["messages"],
@@ -145,6 +156,12 @@ async function streamLlmToSpeech(
   timing.llmEndAt = timing.llmEndAt || Date.now();
 
   if (turn.toolCalls.length > 0) {
+    if (buffer.trim()) {
+      agentText += (agentText ? " " : "") + buffer.trim();
+      await speakResponse(session, buffer.trim(), { timing, skipTranscriptLog: true });
+      buffer = "";
+    }
+
     const filler = await getToolFillerPhrase(
       session.restaurantId,
       turn.toolCalls.map((c) => c.name),
@@ -173,7 +190,7 @@ async function streamLlmToSpeech(
       currentTurn = followUp;
     }
 
-    await speakResponse(session, reply, { timing });
+    await speakResponse(session, reply.trim(), { timing });
     appendTurnToSession(session, baseCount, messages, userText, reply);
     return reply;
   }
@@ -181,6 +198,7 @@ async function streamLlmToSpeech(
   if (buffer.trim()) {
     agentText += (agentText ? " " : "") + buffer.trim();
     await speakResponse(session, buffer.trim(), { timing, skipTranscriptLog: true });
+    buffer = "";
   }
 
   const finalText = agentText || turn.text;
@@ -189,6 +207,9 @@ async function streamLlmToSpeech(
   } else if (finalText) {
     await logCherryVoiceTranscript(session, "assistant", finalText);
     emitSessionEvent(session, { type: "assistant_text", payload: { text: finalText } });
+    if (!session.textOnlyMode && timing.firstAudioAt == null) {
+      await speakResponse(session, finalText, { timing, skipTranscriptLog: true });
+    }
   }
 
   const reply = finalText || "Sorry, I couldn't complete that. Could you repeat?";
@@ -202,11 +223,14 @@ async function synthesizeWithChunks(
   options?: { modelId?: string; timing?: TurnTiming | null },
 ): Promise<number> {
   if (session.textOnlyMode) return 0;
+  const trimmed = text.trim();
+  if (!trimmed) return 0;
+
   let audioChunks = 0;
   let firstMarked = false;
   await tts.synthesize({
     voiceId: session.voiceId,
-    text,
+    text: trimmed,
     modelId: options?.modelId,
     signal: session.ttsAbort?.signal,
     onFirstChunk: () => {
@@ -231,7 +255,30 @@ async function synthesizeWithChunks(
   return audioChunks;
 }
 
-async function emitTtsFallback(session: VoiceSessionRecord, text: string): Promise<void> {
+async function synthesizeWithRetries(
+  session: VoiceSessionRecord,
+  text: string,
+  options?: { modelId?: string; timing?: TurnTiming | null },
+): Promise<number> {
+  let chunks = await synthesizeWithChunks(session, text, options);
+  if (chunks > 0 || session.ttsAbort?.signal.aborted) return chunks;
+
+  chunks = await synthesizeWithChunks(session, text, options);
+  if (chunks > 0 || session.ttsAbort?.signal.aborted) return chunks;
+
+  const shorter = truncateForTtsRetry(text);
+  if (shorter && shorter !== text.trim()) {
+    chunks = await synthesizeWithChunks(session, shorter, options);
+  }
+  return chunks;
+}
+
+async function emitTtsFallback(
+  session: VoiceSessionRecord,
+  text: string,
+  timing?: TurnTiming | null,
+): Promise<void> {
+  if (timing) timing.audioFallbackEmitted = true;
   emitSessionEvent(session, {
     type: "tts_fallback",
     payload: { text, useWebSpeech: true },
@@ -243,16 +290,17 @@ async function speakResponse(
   text: string,
   options?: SpeakOptions,
 ): Promise<void> {
-  if (!text.trim() || session.state === "ended") return;
+  const trimmed = text.trim();
+  if (!trimmed || session.state === "ended") return;
 
-  interruptSpeech(session);
+  cancelPendingTts(session);
   session.ttsAbort = new AbortController();
   session.isSpeaking = true;
   setSessionState(session, "speaking");
 
   if (!options?.skipTranscriptLog) {
-    emitSessionEvent(session, { type: "assistant_text", payload: { text } });
-    await logCherryVoiceTranscript(session, "assistant", text);
+    emitSessionEvent(session, { type: "assistant_text", payload: { text: trimmed } });
+    await logCherryVoiceTranscript(session, "assistant", trimmed);
   }
 
   if (session.textOnlyMode) {
@@ -267,27 +315,24 @@ async function speakResponse(
   }
 
   try {
-    let audioChunks = await synthesizeWithChunks(session, text, options);
-
-    if (audioChunks === 0 && !session.ttsAbort.signal.aborted) {
-      audioChunks = await synthesizeWithChunks(session, text, options);
-    }
+    let audioChunks = await synthesizeWithRetries(session, trimmed, options);
 
     if (audioChunks === 0 && !session.ttsAbort.signal.aborted) {
       session.ttsFailureCount += 1;
       const errMsg = "TTS returned no audio chunks";
-      await logCherryVoiceTtsError(session, errMsg, text);
+      await logCherryVoiceTtsError(session, errMsg, trimmed);
       emitSessionEvent(session, {
         type: "error",
         payload: { message: sanitizeVoiceError(errMsg), recoverable: true },
       });
 
-      const fallback = await getTtsFallbackPhrase(session.restaurantId);
-      await emitTtsFallback(session, fallback);
-      const fallbackChunks = await synthesizeWithChunks(session, fallback, options);
+      await emitTtsFallback(session, trimmed, options?.timing);
+
+      const fallbackPhrase = await getTtsFallbackPhrase(session.restaurantId);
+      const fallbackChunks = await synthesizeWithChunks(session, fallbackPhrase, options);
       if (fallbackChunks > 0) {
-        emitSessionEvent(session, { type: "assistant_text", payload: { text: fallback } });
-        await logCherryVoiceTranscript(session, "assistant", fallback);
+        emitSessionEvent(session, { type: "assistant_text", payload: { text: fallbackPhrase } });
+        await logCherryVoiceTranscript(session, "assistant", fallbackPhrase);
       }
 
       if (session.ttsFailureCount >= 2) {
@@ -295,22 +340,22 @@ async function speakResponse(
       }
     }
   } catch (err) {
-    if ((err as Error).name !== "AbortError") {
+    if ((err as Error).name !== "AbortError" && !session.ttsAbort?.signal.aborted) {
       session.ttsFailureCount += 1;
       const message = (err as Error).message;
-      await logCherryVoiceTtsError(session, message, text);
+      await logCherryVoiceTtsError(session, message, trimmed);
       session.failed = true;
       emitSessionEvent(session, {
         type: "error",
         payload: { message: sanitizeVoiceError(message), recoverable: true },
       });
-      const fallback = await getTtsFallbackPhrase(session.restaurantId);
-      await emitTtsFallback(session, text);
+      await emitTtsFallback(session, trimmed, options?.timing);
       try {
-        const fallbackChunks = await synthesizeWithChunks(session, fallback, options);
+        const fallbackPhrase = await getTtsFallbackPhrase(session.restaurantId);
+        const fallbackChunks = await synthesizeWithChunks(session, fallbackPhrase, options);
         if (fallbackChunks > 0) {
-          emitSessionEvent(session, { type: "assistant_text", payload: { text: fallback } });
-          await logCherryVoiceTranscript(session, "assistant", fallback);
+          emitSessionEvent(session, { type: "assistant_text", payload: { text: fallbackPhrase } });
+          await logCherryVoiceTranscript(session, "assistant", fallbackPhrase);
         }
       } catch {
         /* best effort */
@@ -357,7 +402,10 @@ async function processUtterance(
   let zeroAudio = false;
   try {
     reply = await streamLlmToSpeech(session, text, timing);
-    zeroAudio = timing.firstAudioAt == null && !session.textOnlyMode;
+    zeroAudio =
+      timing.firstAudioAt == null &&
+      !timing.audioFallbackEmitted &&
+      !session.textOnlyMode;
   } catch (err) {
     session.failed = true;
     emitSessionEvent(session, {
@@ -423,6 +471,8 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
   const session = getVoiceSession(sessionId);
   if (!session) throw new Error("Session not found");
   if (sttBySession.has(sessionId)) return;
+
+  session.voiceId = resolveInworldVoiceId(session.voiceId);
 
   await initCherryVoiceCallLog(session);
 

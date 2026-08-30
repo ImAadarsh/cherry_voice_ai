@@ -5,6 +5,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { getCherryVoiceSettingsByToken } from "@/lib/repositories/cherry-voice";
 import { resolveRestaurantSttLocale } from "@/lib/voice/deepgram-locale";
 import { isCherryVoiceConfigured } from "@/lib/voice/config";
+import { resolveInworldVoiceId } from "@/lib/voice/inworld-voices";
 import { startVoiceOrchestrator } from "@/lib/voice/orchestrator";
 import { createVoiceSession } from "@/lib/voice/session-store";
 import {
@@ -58,7 +59,7 @@ export async function POST(req: Request) {
 
   const session = createVoiceSession({
     restaurantId: settings.restaurantId,
-    voiceId: settings.inworldVoiceId,
+    voiceId: resolveInworldVoiceId(settings.inworldVoiceId),
     greeting: settings.greeting,
     processingEarconEnabled: settings.processingEarconEnabled,
     postCallSmsEnabled: settings.postCallSmsEnabled,

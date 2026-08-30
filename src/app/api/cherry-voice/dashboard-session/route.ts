@@ -11,6 +11,7 @@ import { isCherryVoiceConfigured } from "@/lib/voice/config";
 import { startVoiceOrchestrator } from "@/lib/voice/orchestrator";
 import { createVoiceSession } from "@/lib/voice/session-store";
 import { normalizePersonalityPreset } from "@/lib/voice/personality";
+import { resolveInworldVoiceId } from "@/lib/voice/inworld-voices";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -68,7 +69,7 @@ export async function POST(req: Request) {
 
     const session = createVoiceSession({
       restaurantId: settings.restaurantId,
-      voiceId,
+      voiceId: resolveInworldVoiceId(voiceId),
       greeting,
       agentId: agentDbId,
       processingEarconEnabled: settings.processingEarconEnabled,

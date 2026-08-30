@@ -145,7 +145,6 @@ export function CherryVoiceWebCallPanel({
           const data = JSON.parse(ev.data) as { state?: string; interrupted?: boolean };
           if (data.interrupted) {
             stopPlayback();
-            sendInterrupt();
           }
           if (data.state === "ended") {
             endCall();
