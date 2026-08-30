@@ -18,16 +18,22 @@ import {
   Pencil,
   Trash2,
   Star,
+  Globe,
+  Copy,
+  Check,
+  ExternalLink,
+  Sparkles,
 } from "lucide-react";
 import { PageHeader } from "@/components/shared/page-header";
 import { OmnidimSyncButton } from "@/components/omnidim/omnidim-sync-button";
-import { AgentFormDialog } from "@/components/agents/agent-form-dialog";
+import { AgentWizardDialog } from "@/components/agents/agent-wizard-dialog";
 import { CallDetailDrawer } from "@/components/calls/call-detail-drawer";
 import { WebCallDialog } from "@/components/omnidim/web-call-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 import { DataTable } from "@/components/ui/data-table";
 import {
   DropdownMenu,
@@ -61,14 +67,23 @@ import { useApiQuery } from "@/hooks/use-api-query";
 import { isDatabaseConnectionError } from "@/lib/api-client";
 import { useOmnidimSync } from "@/hooks/use-omnidim-sync";
 import { api } from "@/lib/api-client";
+import { AGENT_TYPE_LABELS } from "@/lib/agent-constants";
+import { INWORLD_VOICES } from "@/lib/voice/inworld-voices";
 import { mapAgentRow, mapCallRow } from "@/lib/mappers";
 import { formatDuration, formatRelativeTime } from "@/lib/utils";
-import type { CallLog, VoiceAgent } from "@/types";
+import type { CallLog, VoiceAgent, VoiceAgentType } from "@/types";
+
+type AgentFilter = "all" | VoiceAgentType;
 
 export default function AgentsPage() {
   useOmnidimSync();
   const { data, loading, error, retry, refetch, errorObject } = useApiQuery<{
     agents: Array<Record<string, unknown>>;
+    cherry_voice?: {
+      demo_url?: string;
+      embed_script?: string;
+      isEnabled?: boolean;
+    } | null;
   }>("/api/agents");
   const { data: callsData, refetch: refetchCalls } = useApiQuery<{
     data: Array<Record<string, unknown>>;
@@ -81,14 +96,26 @@ export default function AgentsPage() {
     () => (callsData?.data ?? []).map((row) => mapCallRow(row)),
     [callsData],
   );
+  const [filter, setFilter] = useState<AgentFilter>("all");
   const [dispatchFor, setDispatchFor] = useState<VoiceAgent | null>(null);
   const [selectedCall, setSelectedCall] = useState<CallLog | null>(null);
   const [webCallFor, setWebCallFor] = useState<VoiceAgent | null>(null);
   const [demoCallFor, setDemoCallFor] = useState<VoiceAgent | null>(null);
-  const [formOpen, setFormOpen] = useState(false);
+  const [wizardOpen, setWizardOpen] = useState(false);
   const [editAgent, setEditAgent] = useState<VoiceAgent | null>(null);
   const [deleteAgent, setDeleteAgent] = useState<VoiceAgent | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [copiedEmbed, setCopiedEmbed] = useState(false);
+
+  const filteredAgents = useMemo(() => {
+    if (filter === "all") return agents;
+    return agents.filter((a) => a.agentType === filter);
+  }, [agents, filter]);
+
+  const nativeCount = agents.filter((a) => a.agentType === "native").length;
+  const platformCount = agents.filter((a) => a.agentType === "platform").length;
+  const demoUrl = data?.cherry_voice?.demo_url;
+  const embedScript = data?.cherry_voice?.embed_script;
 
   const handleDelete = async () => {
     if (!deleteAgent) return;
@@ -136,13 +163,26 @@ export default function AgentsPage() {
 
   const openCreate = () => {
     setEditAgent(null);
-    setFormOpen(true);
+    setWizardOpen(true);
   };
 
   const openEdit = (agent: VoiceAgent) => {
     setEditAgent(agent);
-    setFormOpen(true);
+    setWizardOpen(true);
   };
+
+  const copyEmbed = async () => {
+    if (!embedScript) return;
+    await navigator.clipboard.writeText(embedScript);
+    setCopiedEmbed(true);
+    toast.success("Embed code copied");
+    setTimeout(() => setCopiedEmbed(false), 2000);
+  };
+
+  const voiceLabel = (voiceId: string) =>
+    INWORLD_VOICES.find((v) => v.id === voiceId)?.label ?? voiceId;
+
+  const platformAgents = agents.filter((a) => a.agentType === "platform");
 
   const columns = useMemo<ColumnDef<VoiceAgent>[]>(
     () => [
@@ -150,24 +190,7 @@ export default function AgentsPage() {
         accessorKey: "name",
         header: "Agent",
         cell: ({ row }) => (
-          <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary/10 text-primary">
-              <Bot className="h-4 w-4" />
-            </div>
-            <div>
-              <p className="font-semibold">
-                {row.original.name}
-                {row.original.isPrimary ? (
-                  <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">
-                    Primary
-                  </span>
-                ) : null}
-              </p>
-              <p className="text-xs font-medium text-muted-foreground">
-                {row.original.role}
-              </p>
-            </div>
-          </div>
+          <AgentNameCell agent={row.original} />
         ),
       },
       {
@@ -184,7 +207,7 @@ export default function AgentsPage() {
       },
       {
         accessorKey: "phoneNumber",
-        header: "Phone",
+        header: "Channel",
         cell: ({ row }) => (
           <span className="font-medium text-muted-foreground">
             {row.original.phoneNumber}
@@ -196,59 +219,15 @@ export default function AgentsPage() {
         header: "",
         enableSorting: false,
         cell: ({ row }) => (
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem asChild>
-                <Link href={`/agents/${row.original.omnidimAgentId}/versions`}>
-                  <History className="mr-2 h-4 w-4" /> Version history
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem asChild>
-                <Link href={`/agents/${row.original.omnidimAgentId}/simulate`}>
-                  <FlaskConical className="mr-2 h-4 w-4" /> Simulate
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setWebCallFor(row.original)}>
-                <Mic2 className="mr-2 h-4 w-4" /> Web call
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setDemoCallFor(row.original)}>
-                <Headphones className="mr-2 h-4 w-4" /> Demo call
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => openEdit(row.original)}>
-                <Pencil className="mr-2 h-4 w-4" /> Edit agent
-              </DropdownMenuItem>
-              {!row.original.isPrimary && (
-                <DropdownMenuItem onClick={() => void handleSetPrimary(row.original)}>
-                  <Star className="mr-2 h-4 w-4" /> Set as primary
-                </DropdownMenuItem>
-              )}
-              <DropdownMenuItem
-                className="text-destructive focus:text-destructive"
-                onClick={() => setDeleteAgent(row.original)}
-              >
-                <Trash2 className="mr-2 h-4 w-4" /> Delete agent
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem asChild>
-                <Link href="/phone-numbers">
-                  <Settings2 className="mr-2 h-4 w-4" /> Phone numbers
-                </Link>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                disabled={row.original.status === "offline"}
-                onClick={() => setDispatchFor(row.original)}
-              >
-                <PhoneOutgoing className="mr-2 h-4 w-4" /> Dispatch call
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+          <PlatformAgentActions
+            agent={row.original}
+            onEdit={openEdit}
+            onDelete={setDeleteAgent}
+            onSetPrimary={handleSetPrimary}
+            onWebCall={setWebCallFor}
+            onDemoCall={setDemoCallFor}
+            onDispatch={setDispatchFor}
+          />
         ),
       },
     ],
@@ -264,11 +243,16 @@ export default function AgentsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Voice Agents"
-        description="Your voice agents, live status and call activity."
+        description="Cherry Voice native agents and Phone & Web platform agents — create, configure, and go live."
       >
         <div className="flex flex-wrap gap-2">
           <Button size="sm" className="gap-2 font-semibold" onClick={openCreate}>
             <Plus className="h-4 w-4" /> New agent
+          </Button>
+          <Button size="sm" variant="outline" className="gap-2 font-semibold" asChild>
+            <Link href="/settings/cherry-voice">
+              <Settings2 className="h-4 w-4" /> Widget settings
+            </Link>
           </Button>
           <OmnidimSyncButton onSynced={handleSynced} />
           {agents.length > 1 && (
@@ -281,25 +265,45 @@ export default function AgentsPage() {
               <Trash2 className="h-4 w-4" /> Clean duplicates
             </Button>
           )}
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-2 font-semibold"
-            onClick={() => setDemoCallFor(agents[0] ?? null)}
-            disabled={!agents.length}
-          >
-            <Headphones className="h-4 w-4" /> Demo call
-          </Button>
+          {demoUrl && (
+            <Button size="sm" variant="secondary" className="gap-2 font-semibold" asChild>
+              <a href={demoUrl} target="_blank" rel="noreferrer">
+                <Globe className="h-4 w-4" /> Test Cherry Voice
+              </a>
+            </Button>
+          )}
           <Button
             size="sm"
             className="gap-2 font-semibold"
-            onClick={() => setDispatchFor(agents[0] ?? null)}
-            disabled={!agents.length}
+            onClick={() => setDispatchFor(platformAgents[0] ?? null)}
+            disabled={!platformAgents.length}
           >
             <PhoneOutgoing className="h-4 w-4" /> Dispatch call
           </Button>
         </div>
       </PageHeader>
+
+      {nativeCount === 0 && !loading && (
+        <Card className="border-primary/20 bg-primary/5">
+          <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary">
+                <Sparkles className="h-5 w-5" />
+              </div>
+              <div>
+                <p className="font-semibold">Create your Cherry Voice agent</p>
+                <p className="text-sm text-muted-foreground">
+                  Embed a native voice agent on your website — Deepgram, Gemini, and Inworld, fully
+                  integrated with your menu and orders.
+                </p>
+              </div>
+            </div>
+            <Button onClick={openCreate} className="shrink-0 gap-2">
+              <Plus className="h-4 w-4" /> Create Cherry Voice agent
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
       <Tabs defaultValue="agents">
         <TabsList>
@@ -311,7 +315,19 @@ export default function AgentsPage() {
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="agents" className="mt-4">
+        <TabsContent value="agents" className="mt-4 space-y-4">
+          <Tabs value={filter} onValueChange={(v) => setFilter(v as AgentFilter)}>
+            <TabsList>
+              <TabsTrigger value="all">All ({agents.length})</TabsTrigger>
+              <TabsTrigger value="native">
+                Cherry Voice ({nativeCount})
+              </TabsTrigger>
+              <TabsTrigger value="platform">
+                Phone & Web ({platformCount})
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
+
           {error ? (
             <ErrorState
               title={
@@ -326,38 +342,71 @@ export default function AgentsPage() {
               }
               onRetry={retry}
             />
+          ) : loading ? (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {[1, 2].map((i) => (
+                <div key={i} className="h-40 animate-pulse rounded-xl bg-muted" />
+              ))}
+            </div>
+          ) : filteredAgents.length === 0 ? (
+            <Card className="p-8 text-center">
+              <Bot className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+              <p className="font-semibold">No agents yet</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Create a Cherry Voice agent for your website or a Phone & Web agent for calls.
+              </p>
+              <Button className="mt-4 gap-2" onClick={openCreate}>
+                <Plus className="h-4 w-4" /> New agent
+              </Button>
+            </Card>
           ) : (
-            <DataTable
-              columns={columns}
-              data={agents}
-              loading={loading}
-              searchKey="name"
-              searchPlaceholder="Search agents…"
-              emptyTitle="No agents"
-              emptyDescription="Create your first voice agent to get started."
-              pageSize={10}
-              mobileCard={(a) => (
-                <Card className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/10 text-primary">
-                        <Bot className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <p className="font-semibold">{a.name}</p>
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {a.phoneNumber}
-                        </p>
-                      </div>
-                    </div>
-                    <AgentStatusDot status={a.status} />
-                  </div>
-                  <p className="mt-3 text-sm font-bold">
-                    {a.callsToday} calls today
-                  </p>
-                </Card>
+            <div className="grid gap-4 lg:grid-cols-2">
+              {filteredAgents.map((agent) =>
+                agent.agentType === "native" ? (
+                  <NativeAgentCard
+                    key={agent.id}
+                    agent={agent}
+                    demoUrl={demoUrl}
+                    embedScript={embedScript}
+                    voiceLabel={voiceLabel(agent.voice)}
+                    onEdit={() => openEdit(agent)}
+                    onDelete={() => setDeleteAgent(agent)}
+                    onSetPrimary={() => void handleSetPrimary(agent)}
+                    onCopyEmbed={copyEmbed}
+                    copiedEmbed={copiedEmbed}
+                  />
+                ) : (
+                  <PlatformAgentCard
+                    key={agent.id}
+                    agent={agent}
+                    onEdit={() => openEdit(agent)}
+                    onDelete={() => setDeleteAgent(agent)}
+                    onSetPrimary={() => void handleSetPrimary(agent)}
+                    onWebCall={() => setWebCallFor(agent)}
+                    onDemoCall={() => setDemoCallFor(agent)}
+                    onDispatch={() => setDispatchFor(agent)}
+                  />
+                ),
               )}
-            />
+            </div>
+          )}
+
+          {platformCount > 0 && filter !== "native" && (
+            <div className="pt-2">
+              <h3 className="mb-3 text-sm font-semibold text-muted-foreground">
+                Phone & Web agents — table view
+              </h3>
+              <DataTable
+                columns={columns}
+                data={filteredAgents.filter((a) => a.agentType === "platform")}
+                loading={false}
+                searchKey="name"
+                searchPlaceholder="Search platform agents…"
+                emptyTitle="No platform agents"
+                emptyDescription="Create a Phone & Web agent for inbound phone and browser calls."
+                pageSize={10}
+              />
+            </div>
           )}
         </TabsContent>
 
@@ -417,7 +466,7 @@ export default function AgentsPage() {
 
       <DispatchDialog
         agent={dispatchFor}
-        agents={agents}
+        agents={platformAgents}
         onClose={() => setDispatchFor(null)}
         onDispatched={handleSynced}
       />
@@ -443,9 +492,9 @@ export default function AgentsPage() {
         mode="demo"
       />
 
-      <AgentFormDialog
-        open={formOpen}
-        onOpenChange={setFormOpen}
+      <AgentWizardDialog
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
         mode={editAgent ? "edit" : "create"}
         agent={editAgent}
         onSaved={() => {
@@ -459,8 +508,10 @@ export default function AgentsPage() {
           <DialogHeader>
             <DialogTitle>Delete {deleteAgent?.name}?</DialogTitle>
             <DialogDescription>
-              This permanently removes the agent from Cherry Voice AI and the voice platform.
-              Call history is kept, but this agent can no longer receive calls.
+              This permanently removes the agent.
+              {deleteAgent?.agentType === "native"
+                ? " Your website widget will be unlinked from this agent."
+                : " Call history is kept, but this agent can no longer receive calls."}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -474,6 +525,271 @@ export default function AgentsPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function AgentNameCell({ agent }: { agent: VoiceAgent }) {
+  return (
+    <div className="flex items-center gap-3">
+      <div className="grid h-9 w-9 place-items-center rounded-xl bg-primary/10 text-primary">
+        <Bot className="h-4 w-4" />
+      </div>
+      <div>
+        <p className="font-semibold">
+          {agent.name}
+          {agent.isPrimary ? (
+            <span className="ml-2 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">
+              Primary
+            </span>
+          ) : null}
+        </p>
+        <div className="flex items-center gap-2">
+          <Badge variant={agent.agentType === "native" ? "default" : "secondary"} className="text-[10px]">
+            {AGENT_TYPE_LABELS[agent.agentType]}
+          </Badge>
+          <p className="text-xs font-medium text-muted-foreground">{agent.role}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NativeAgentCard({
+  agent,
+  demoUrl,
+  embedScript,
+  voiceLabel,
+  onEdit,
+  onDelete,
+  onSetPrimary,
+  onCopyEmbed,
+  copiedEmbed,
+}: {
+  agent: VoiceAgent;
+  demoUrl?: string;
+  embedScript?: string;
+  voiceLabel: string;
+  onEdit: () => void;
+  onDelete: () => void;
+  onSetPrimary: () => void;
+  onCopyEmbed: () => void;
+  copiedEmbed: boolean;
+}) {
+  return (
+    <Card className="overflow-hidden">
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-xl bg-primary/10 text-primary">
+              <Sparkles className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="font-semibold">{agent.name}</p>
+                {agent.isPrimary && (
+                  <Badge variant="outline" className="text-[10px]">
+                    Primary
+                  </Badge>
+                )}
+              </div>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                <Badge>{AGENT_TYPE_LABELS.native}</Badge>
+                <Badge variant={agent.widgetEnabled ? "success" : "secondary"}>
+                  Widget {agent.widgetEnabled ? "live" : "off"}
+                </Badge>
+              </div>
+            </div>
+          </div>
+          <AgentStatusDot status={agent.status} />
+        </div>
+
+        <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <dt className="text-xs text-muted-foreground">Voice</dt>
+            <dd className="font-medium">{voiceLabel}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Channel</dt>
+            <dd className="font-medium">Website widget</dd>
+          </div>
+        </dl>
+
+        <div className="mt-4 flex flex-wrap gap-2">
+          {demoUrl && (
+            <Button size="sm" variant="secondary" className="gap-1.5" asChild>
+              <a href={demoUrl} target="_blank" rel="noreferrer">
+                <Globe className="h-3.5 w-3.5" /> Test call
+              </a>
+            </Button>
+          )}
+          {embedScript && (
+            <Button size="sm" variant="outline" className="gap-1.5" onClick={onCopyEmbed}>
+              {copiedEmbed ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              Embed code
+            </Button>
+          )}
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={onEdit}>
+            <Pencil className="h-3.5 w-3.5" /> Edit
+          </Button>
+          {!agent.isPrimary && (
+            <Button size="sm" variant="ghost" className="gap-1.5" onClick={onSetPrimary}>
+              <Star className="h-3.5 w-3.5" /> Set primary
+            </Button>
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            className="gap-1.5 text-destructive hover:text-destructive"
+            onClick={onDelete}
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PlatformAgentCard({
+  agent,
+  onEdit,
+  onDelete,
+  onSetPrimary,
+  onWebCall,
+  onDemoCall,
+  onDispatch,
+}: {
+  agent: VoiceAgent;
+  onEdit: () => void;
+  onDelete: () => void;
+  onSetPrimary: () => void;
+  onWebCall: () => void;
+  onDemoCall: () => void;
+  onDispatch: () => void;
+}) {
+  return (
+    <Card>
+      <CardContent className="p-5">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="grid h-11 w-11 place-items-center rounded-xl bg-secondary text-foreground">
+              <PhoneOutgoing className="h-5 w-5" />
+            </div>
+            <div>
+              <p className="font-semibold">{agent.name}</p>
+              <Badge variant="secondary" className="mt-1">
+                {AGENT_TYPE_LABELS.platform}
+              </Badge>
+            </div>
+          </div>
+          <AgentStatusDot status={agent.status} />
+        </div>
+        <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+          <div>
+            <dt className="text-xs text-muted-foreground">Phone</dt>
+            <dd className="font-medium">{agent.phoneNumber}</dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">Calls today</dt>
+            <dd className="font-medium tabular">{agent.callsToday}</dd>
+          </div>
+        </dl>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={onWebCall}>
+            <Mic2 className="h-3.5 w-3.5" /> Web call
+          </Button>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={onDemoCall}>
+            <Headphones className="h-3.5 w-3.5" /> Demo
+          </Button>
+          <Button size="sm" variant="outline" className="gap-1.5" onClick={onEdit}>
+            <Pencil className="h-3.5 w-3.5" /> Edit
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="gap-1.5"
+            disabled={agent.status === "offline"}
+            onClick={onDispatch}
+          >
+            <PhoneOutgoing className="h-3.5 w-3.5" /> Dispatch
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PlatformAgentActions({
+  agent,
+  onEdit,
+  onDelete,
+  onSetPrimary,
+  onWebCall,
+  onDemoCall,
+  onDispatch,
+}: {
+  agent: VoiceAgent;
+  onEdit: (a: VoiceAgent) => void;
+  onDelete: (a: VoiceAgent) => void;
+  onSetPrimary: (a: VoiceAgent) => void;
+  onWebCall: (a: VoiceAgent) => void;
+  onDemoCall: (a: VoiceAgent) => void;
+  onDispatch: (a: VoiceAgent) => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-8 w-8">
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem asChild>
+          <Link href={`/agents/${agent.omnidimAgentId}/versions`}>
+            <History className="mr-2 h-4 w-4" /> Version history
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href={`/agents/${agent.omnidimAgentId}/simulate`}>
+            <FlaskConical className="mr-2 h-4 w-4" /> Simulate
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onWebCall(agent)}>
+          <Mic2 className="mr-2 h-4 w-4" /> Web call
+        </DropdownMenuItem>
+        <DropdownMenuItem onClick={() => onDemoCall(agent)}>
+          <Headphones className="mr-2 h-4 w-4" /> Demo call
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onClick={() => onEdit(agent)}>
+          <Pencil className="mr-2 h-4 w-4" /> Edit agent
+        </DropdownMenuItem>
+        {!agent.isPrimary && (
+          <DropdownMenuItem onClick={() => onSetPrimary(agent)}>
+            <Star className="mr-2 h-4 w-4" /> Set as primary
+          </DropdownMenuItem>
+        )}
+        <DropdownMenuItem
+          className="text-destructive focus:text-destructive"
+          onClick={() => onDelete(agent)}
+        >
+          <Trash2 className="mr-2 h-4 w-4" /> Delete agent
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem asChild>
+          <Link href="/phone-numbers">
+            <Settings2 className="mr-2 h-4 w-4" /> Phone numbers
+          </Link>
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          disabled={agent.status === "offline"}
+          onClick={() => onDispatch(agent)}
+        >
+          <PhoneOutgoing className="mr-2 h-4 w-4" /> Dispatch call
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

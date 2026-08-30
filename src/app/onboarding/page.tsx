@@ -32,7 +32,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Logo } from "@/components/brand/logo";
 import { CurrencySelect } from "@/components/shared/currency-select";
 import { VoicePicker } from "@/components/omnidim/voice-picker";
+import { CherryVoicePicker } from "@/components/cherry-voice/voice-picker";
 import { WebCallPanel } from "@/components/omnidim/web-call-panel";
+import { AGENT_TYPE_DESCRIPTIONS, AGENT_TYPE_LABELS } from "@/lib/agent-constants";
+import type { VoiceAgentType } from "@/types";
 import { api } from "@/lib/api-client";
 import { formatMoney } from "@/lib/currency";
 import { cn } from "@/lib/utils";
@@ -186,6 +189,7 @@ export default function OnboardingPage() {
   const [processingMessage, setProcessingMessage] = useState("");
   const [extracted, setExtracted] = useState<Array<{ name: string; price: number; description?: string }>>([]);
   const [agentPrompt, setAgentPrompt] = useState("");
+  const [agentType, setAgentType] = useState<VoiceAgentType>("native");
   const [selectedVoice, setSelectedVoice] = useState("");
   const [agentName, setAgentName] = useState("Ruby");
   const [phoneNumbers, setPhoneNumbers] = useState<Array<{ id?: string | number; phone_number?: string }>>([]);
@@ -443,16 +447,25 @@ export default function OnboardingPage() {
         agent: { id?: string | number };
         localId?: number;
         reused?: boolean;
+        agent_type?: string;
       }>("/api/agents", {
+        agent_type: agentType,
         name: agentName.trim(),
         welcome_message: `Thanks for calling ${account.restaurantName || "us"}! How can I help you today?`,
         context_breakdown: [{ title: "Instructions", body: prompt, type: "text" }],
-        voice_id: selectedVoice || undefined,
+        voice_id: selectedVoice || (agentType === "native" ? "Sarah" : undefined),
         use_generated_prompt: false,
+        is_enabled: agentType === "native",
       });
       const id = res.agent?.id ?? res.localId;
       setCreatedAgentId(id != null ? String(id) : null);
-      toast.success(res.reused ? "Using your existing agent" : "Voice agent created");
+      toast.success(
+        res.reused
+          ? "Using your existing agent"
+          : agentType === "native"
+            ? "Cherry Voice agent created"
+            : "Phone & Web agent created",
+      );
       next();
     } catch (e) {
       toast.error((e as Error).message);
@@ -800,14 +813,46 @@ export default function OnboardingPage() {
 
                 {step === "voice" && (
                   <>
+                    <div className="space-y-2">
+                      <Label>Agent type</Label>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {(["native", "platform"] as const).map((type) => (
+                          <button
+                            key={type}
+                            type="button"
+                            onClick={() => setAgentType(type)}
+                            className={cn(
+                              "rounded-xl border p-3 text-left text-sm transition-colors",
+                              agentType === type
+                                ? "border-primary bg-primary/5 ring-1 ring-primary"
+                                : "hover:bg-muted/40",
+                            )}
+                          >
+                            <p className="font-semibold">{AGENT_TYPE_LABELS[type]}</p>
+                            <p className="mt-1 text-xs text-muted-foreground">
+                              {AGENT_TYPE_DESCRIPTIONS[type]}
+                            </p>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <p className="text-sm text-muted-foreground">
-                      Pick a voice for your agent with live preview from available voice providers.
+                      {agentType === "native"
+                        ? "Pick an Inworld voice for your Cherry Voice website agent."
+                        : "Pick a voice for your Phone & Web agent with live preview."}
                     </p>
-                    <VoicePicker
-                      value={selectedVoice}
-                      onChange={setSelectedVoice}
-                      autoLoad
-                    />
+                    {agentType === "native" ? (
+                      <CherryVoicePicker
+                        value={selectedVoice || "Sarah"}
+                        onChange={setSelectedVoice}
+                      />
+                    ) : (
+                      <VoicePicker
+                        value={selectedVoice}
+                        onChange={setSelectedVoice}
+                        autoLoad
+                      />
+                    )}
                   </>
                 )}
 
@@ -905,17 +950,28 @@ export default function OnboardingPage() {
                         </div>
                       )}
                     </dl>
-                    {createdAgentId && (
+                    {createdAgentId && agentType === "platform" && (
                       <div className="mt-6 rounded-xl border bg-card p-4">
                         <h3 className="mb-1 font-semibold">Try your agent before go-live</h3>
                         <p className="mb-4 text-sm text-muted-foreground">
-                          Test a browser voice call — no phone number required. Powered by Cherry Voice AI.
+                          Test a browser voice call — no phone number required.
                         </p>
                         <WebCallPanel
                           agentId={createdAgentId}
                           agentName={agentName}
                           mode="demo"
                         />
+                      </div>
+                    )}
+                    {createdAgentId && agentType === "native" && (
+                      <div className="mt-6 rounded-xl border bg-card p-4">
+                        <h3 className="mb-1 font-semibold">Your Cherry Voice agent is ready</h3>
+                        <p className="mb-4 text-sm text-muted-foreground">
+                          Test the website widget or copy embed code from Voice Agents after go-live.
+                        </p>
+                        <Button variant="secondary" size="sm" asChild>
+                          <Link href="/agents">Open Voice Agents</Link>
+                        </Button>
                       </div>
                     )}
                   </>

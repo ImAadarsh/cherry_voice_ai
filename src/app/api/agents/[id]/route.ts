@@ -5,20 +5,34 @@ import { requireOmnidimKey } from "@/lib/omnidim-api";
 import { getOmnidim } from "@/lib/omnidim";
 import { requireRestaurantId } from "@/lib/route-auth";
 import { isOmnidimConfigured } from "@/lib/platform-config";
+import { isNativeAgentType } from "@/lib/agent-constants";
 import {
   deleteAgentIntegrations,
   deleteAgentMapping,
+  listAgents,
   resolveAgentMapping,
   setPrimaryAgent,
   updateAgentMapping,
   upsertAgentMapping,
 } from "@/lib/repositories/agents";
+import { updateCherryVoiceSettings } from "@/lib/repositories/cherry-voice";
 import { sanitizePlatformError } from "@/lib/platform-errors";
 import { appendIntegrationToolsPrompt, provisionAgentWithIntegrations } from "@/lib/services/agent-provisioning";
 import { applyAgentVoiceDefaults } from "@/lib/services/omnidim-agent-defaults";
+import { updateNativeAgent } from "@/lib/services/native-agent";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+
+function parseAgentConfig(config: unknown): Record<string, unknown> {
+  if (!config) return {};
+  if (typeof config === "object") return config as Record<string, unknown>;
+  try {
+    return JSON.parse(String(config)) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
 
 /**
  * GET /api/agents/[id]
@@ -31,6 +45,32 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   const mapping = await resolveAgentMapping(restaurantId, params.id);
   if (!mapping) return fail("Agent not found for this restaurant", 404);
 
+  const agents = await listAgents(restaurantId);
+  const row = agents.find((a) => Number(a.id) === mapping.id);
+  const agentType = String(row?.agent_type ?? "platform");
+  const isNative = isNativeAgentType(agentType, mapping.omnidim_agent_id);
+
+  if (isNative) {
+    const config = parseAgentConfig(row?.config);
+    return ok({
+      agent: {
+        id: mapping.omnidim_agent_id,
+        name: mapping.name,
+        agent_type: "native",
+        prompt: config.prompt,
+        welcome_message: config.welcome_message,
+        widget_position: config.widget_position,
+        accent_color: config.accent_color,
+        is_enabled: config.is_enabled,
+        voice_id: row?.voice_id,
+        context_breakdown: config.prompt
+          ? [{ title: "Instructions", body: config.prompt, type: "text" }]
+          : [],
+      },
+      mapping: { ...mapping, agent_type: "native" },
+    });
+  }
+
   if (!(await isOmnidimConfigured())) {
     return ok({ agent: null, mapping });
   }
@@ -41,7 +81,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   try {
     const omnidim = await getOmnidim();
     const agent = await omnidim.agents.get(mapping.omnidim_agent_id);
-    return ok({ agent, mapping });
+    return ok({ agent, mapping: { ...mapping, agent_type: "platform" } });
   } catch (err) {
     const status = (err as { status?: number })?.status;
     return fail(
@@ -58,19 +98,19 @@ const patchSchema = z.object({
   context_breakdown: z.array(z.record(z.string(), z.unknown())).optional(),
   prompt: z.string().optional(),
   is_primary: z.boolean().optional(),
+  widget_position: z.enum(["bottom-right", "bottom-left"]).optional(),
+  accent_color: z.string().optional(),
+  is_enabled: z.boolean().optional(),
 });
 
 /**
  * PATCH /api/agents/[id]
- * Update agent name, prompt, and voice — syncs to the voice platform.
+ * Update agent — native agents update locally; platform agents sync to voice platform.
  */
 export async function PATCH(req: Request, { params }: { params: { id: string } }) {
   try {
     const restaurantId = await requireRestaurantId(req);
     if (restaurantId instanceof Response) return restaurantId;
-    if (!(await isOmnidimConfigured())) {
-      return fail("Voice AI platform is not configured. Contact support.", 503);
-    }
 
     const mapping = await resolveAgentMapping(restaurantId, params.id);
     if (!mapping) return fail("Agent not found for this restaurant", 404);
@@ -78,6 +118,51 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     const body = await readJson(req);
     const parsed = patchSchema.safeParse(body ?? {});
     if (!parsed.success) return fail("Invalid update payload", 422, { issues: parsed.error.issues });
+
+    const agents = await listAgents(restaurantId);
+    const row = agents.find((a) => Number(a.id) === mapping.id);
+    const agentType = String(row?.agent_type ?? "platform");
+    const isNative = isNativeAgentType(agentType, mapping.omnidim_agent_id);
+    const localId = Number(mapping.id);
+
+    if (isNative) {
+      const prompt =
+        parsed.data.prompt ??
+        parsed.data.context_breakdown?.find((b) => b.body)?.body?.toString();
+
+      await updateNativeAgent(restaurantId, localId, {
+        name: parsed.data.name,
+        voiceId: parsed.data.voice_id != null ? String(parsed.data.voice_id) : undefined,
+        prompt,
+        welcomeMessage: parsed.data.welcome_message,
+        widgetPosition: parsed.data.widget_position,
+        accentColor: parsed.data.accent_color,
+        isEnabled: parsed.data.is_enabled,
+        isPrimary: parsed.data.is_primary,
+      });
+
+      if (parsed.data.is_primary) {
+        await setPrimaryAgent(restaurantId, localId);
+      }
+
+      const updatedAgents = await listAgents(restaurantId);
+      const updated = updatedAgents.find((a) => Number(a.id) === localId);
+      const config = parseAgentConfig(updated?.config);
+
+      return ok({
+        agent: {
+          id: mapping.omnidim_agent_id,
+          name: parsed.data.name ?? mapping.name,
+          agent_type: "native",
+          prompt: config.prompt,
+        },
+        mapping: updated,
+      });
+    }
+
+    if (!(await isOmnidimConfigured())) {
+      return fail("Voice AI platform is not configured. Contact support.", 503);
+    }
 
     const omnidim = await getOmnidim();
     const updatePayload: Record<string, unknown> = {};
@@ -100,7 +185,6 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       await appendIntegrationToolsPrompt(mapping.omnidim_agent_id);
     }
 
-    const localId = Number(mapping.id);
     await updateAgentMapping(restaurantId, localId, {
       name: parsed.data.name,
       voiceId: parsed.data.voice_id != null ? String(parsed.data.voice_id) : undefined,
@@ -115,6 +199,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       restaurantId,
       omnidimAgentId: mapping.omnidim_agent_id,
       name: parsed.data.name ?? mapping.name,
+      agentType: "platform",
       config: updated,
     });
 
@@ -127,7 +212,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
 
 /**
  * DELETE /api/agents/[id]
- * Delete agent from voice platform and local mapping (tenant-scoped).
+ * Delete agent — native agents are local-only; platform agents also delete remotely.
  */
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
   try {
@@ -137,7 +222,12 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
     const mapping = await resolveAgentMapping(restaurantId, params.id);
     if (!mapping) return fail("Agent not found for this restaurant", 404);
 
-    if (await isOmnidimConfigured()) {
+    const agents = await listAgents(restaurantId);
+    const row = agents.find((a) => Number(a.id) === mapping.id);
+    const agentType = String(row?.agent_type ?? "platform");
+    const isNative = isNativeAgentType(agentType, mapping.omnidim_agent_id);
+
+    if (!isNative && (await isOmnidimConfigured())) {
       try {
         const omnidim = await getOmnidim();
         await omnidim.agents.delete(mapping.omnidim_agent_id);
@@ -151,9 +241,13 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
           );
         }
       }
+      await deleteAgentIntegrations(restaurantId, mapping.omnidim_agent_id);
     }
 
-    await deleteAgentIntegrations(restaurantId, mapping.omnidim_agent_id);
+    if (isNative) {
+      await updateCherryVoiceSettings(restaurantId, { agentId: null });
+    }
+
     await deleteAgentMapping(restaurantId, mapping.id);
 
     return ok({ deleted: true, id: mapping.id });

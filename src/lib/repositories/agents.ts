@@ -21,10 +21,13 @@ export async function findAgentByPhoneNumber(phoneNumber: string) {
   );
 }
 
+export type AgentType = "native" | "platform";
+
 export type AgentMapping = {
   id: number;
   restaurant_id: number;
   omnidim_agent_id: string;
+  agent_type?: AgentType;
   name: string;
   phone_number?: string | null;
 };
@@ -37,7 +40,7 @@ export async function resolveAgentMapping(
   const ref = String(agentRef);
   const numericId = Number(ref);
   return queryOne<AgentMapping>(
-    `SELECT id, restaurant_id, omnidim_agent_id, name, phone_number FROM omnidim_agents
+    `SELECT id, restaurant_id, omnidim_agent_id, agent_type, name, phone_number FROM omnidim_agents
      WHERE restaurant_id = ? AND (omnidim_agent_id = ? OR id = ?)
      LIMIT 1`,
     [restaurantId, ref, Number.isFinite(numericId) ? numericId : -1],
@@ -67,6 +70,7 @@ export async function upsertAgentMapping(input: {
   phoneNumber?: string | null;
   direction?: "inbound" | "outbound" | "both";
   voiceId?: string | null;
+  agentType?: AgentType;
   config?: unknown;
   isPrimary?: boolean;
 }): Promise<number> {
@@ -80,17 +84,21 @@ export async function upsertAgentMapping(input: {
     config = base;
   }
 
+  const agentType = input.agentType ?? "platform";
+
   const [res] = await pool.query<ResultSetHeader>(
     `INSERT INTO omnidim_agents
-       (restaurant_id, omnidim_agent_id, name, phone_number, direction, voice_id, config, last_synced_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+       (restaurant_id, omnidim_agent_id, agent_type, name, phone_number, direction, voice_id, config, last_synced_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON DUPLICATE KEY UPDATE
        name = VALUES(name), phone_number = VALUES(phone_number),
+       agent_type = VALUES(agent_type),
        direction = VALUES(direction), voice_id = COALESCE(VALUES(voice_id), voice_id),
        config = VALUES(config), last_synced_at = CURRENT_TIMESTAMP`,
     [
       input.restaurantId,
       String(input.omnidimAgentId),
+      agentType,
       input.name,
       input.phoneNumber ?? null,
       input.direction ?? "inbound",
@@ -98,7 +106,14 @@ export async function upsertAgentMapping(input: {
       config ? JSON.stringify(config) : null,
     ],
   );
-  return res.insertId;
+
+  if (res.insertId) return res.insertId;
+
+  const row = await queryOne<{ id: number }>(
+    `SELECT id FROM omnidim_agents WHERE restaurant_id = ? AND omnidim_agent_id = ? LIMIT 1`,
+    [input.restaurantId, String(input.omnidimAgentId)],
+  );
+  return row?.id ?? res.insertId;
 }
 
 export async function updateAgentMapping(
@@ -108,6 +123,7 @@ export async function updateAgentMapping(
     name?: string;
     phoneNumber?: string | null;
     voiceId?: string | null;
+    agentType?: AgentType;
     config?: unknown;
     isActive?: boolean;
   },
@@ -126,6 +142,10 @@ export async function updateAgentMapping(
   if (input.voiceId !== undefined) {
     sets.push("voice_id = ?");
     params.push(input.voiceId);
+  }
+  if (input.agentType !== undefined) {
+    sets.push("agent_type = ?");
+    params.push(input.agentType);
   }
   if (input.config !== undefined) {
     sets.push("config = ?");

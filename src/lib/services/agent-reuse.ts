@@ -8,6 +8,7 @@ export type AgentRow = {
   id: number | string;
   name: string;
   omnidim_agent_id: string;
+  agent_type?: string;
   created_at?: string | Date;
   config?: unknown;
 };
@@ -42,6 +43,7 @@ export async function findReusableAgent(
       id: row.id as number | string,
       name: String(row.name),
       omnidim_agent_id: String(row.omnidim_agent_id ?? ""),
+      agent_type: row.agent_type ? String(row.agent_type) : undefined,
       created_at: row.created_at as string | Date | undefined,
       config: row.config,
     };

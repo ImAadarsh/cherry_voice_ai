@@ -1,3 +1,4 @@
+import { isNativeAgentType } from "@/lib/agent-constants";
 import { toMajor } from "./money";
 import type {
   CallLog,
@@ -146,20 +147,41 @@ export function mapAgentRow(row: Record<string, unknown>): VoiceAgent {
   const active = Boolean(row.is_active ?? true);
   const omnidimAgentId = String(row.omnidim_agent_id ?? row.id);
   const config = parseAgentConfig(row);
+  const agentTypeRaw = String(row.agent_type ?? "");
+  const agentType = isNativeAgentType(agentTypeRaw, omnidimAgentId) ? "native" : "platform";
+  const widgetConfig = config as {
+    is_enabled?: boolean;
+    welcome_message?: string;
+    accent_color?: string;
+    widget_position?: "bottom-right" | "bottom-left";
+  };
+
   return {
     id: String(row.id),
     omnidimAgentId,
+    agentType,
     name: String(row.name),
-    role: config.is_primary ? "Primary voice agent" : "Voice Agent",
+    role:
+      agentType === "native"
+        ? config.is_primary
+          ? "Primary Cherry Voice agent"
+          : "Cherry Voice agent"
+        : config.is_primary
+          ? "Primary voice agent"
+          : "Phone & Web agent",
     status: active ? "online" : "offline",
-    phoneNumber: String(row.phone_number ?? "—"),
+    phoneNumber: agentType === "native" ? "Website widget" : String(row.phone_number ?? "—"),
     language: String(row.language ?? "English"),
     voice: String(row.voice_id ?? "Default"),
     callsToday: 0,
     avgDuration: 0,
     successRate: active ? 0.9 : 0,
-    model: "cherry-voice",
+    model: agentType === "native" ? "cherry-voice-native" : "platform",
     isPrimary: Boolean(config.is_primary),
+    widgetEnabled: widgetConfig.is_enabled ?? true,
+    greeting: widgetConfig.welcome_message ? String(widgetConfig.welcome_message) : undefined,
+    accentColor: widgetConfig.accent_color ? String(widgetConfig.accent_color) : undefined,
+    widgetPosition: widgetConfig.widget_position,
   };
 }
 

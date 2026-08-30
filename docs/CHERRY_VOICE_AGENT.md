@@ -34,7 +34,7 @@ Rotate the widget token from **Settings → Website Voice Widget** if a token is
 DEEPGRAM_API_KEY=           # Deepgram Nova 3 live STT
 INWORLD_API_KEY=            # Inworld Basic auth key
 GEMINI_API_KEY=             # Shared with menu extraction
-CHERRY_VOICE_GEMINI_MODEL=gemini-2.0-flash-lite
+CHERRY_VOICE_GEMINI_MODEL=gemini-3.5-flash-lite
 CHERRY_VOICE_STT_MODEL=nova-3
 CHERRY_VOICE_TTS_MODEL=inworld-tts-2-flash
 ```
@@ -53,7 +53,8 @@ Optional attributes: `data-base-url` (defaults to script origin), `data-restaura
 
 ## Dashboard
 
-- **Settings → Website Voice Widget** — voice picker, greeting, colors, embed code
+- **Voice Agents** (`/agents`) — primary hub for Cherry Voice native agents and Phone & Web platform agents. Use **+ New agent** to launch the creation wizard.
+- **Settings → Website Voice Widget** — advanced widget token rotation and provider status (main config lives in the agent wizard).
 - **Demo** — `/demo/cherry-voice?token=cvw_...`
 
 ## Tools (Gemini function calling)
@@ -84,9 +85,9 @@ For tool calls during voice sessions, set `APP_BASE_URL` to a public HTTPS URL (
 
 ## Omnidim vs Cherry Voice
 
-| Channel | Stack |
-|---------|-------|
-| Omnidim (phone / legacy web) | OmniDimension platform |
-| Cherry Voice widget | Deepgram + Gemini + Inworld on Cherry servers |
+| Channel | Stack | Dashboard label |
+|---------|-------|-----------------|
+| Phone & Web (platform) | Voice platform for phone/browser calls | **Phone & Web** badge on `/agents` |
+| Cherry Voice widget (native) | Deepgram + Gemini + Inworld on Cherry servers | **Cherry Voice** badge on `/agents` |
 
-Both channels can call the same integration tool handlers for orders and reservations.
+Both channels use the same integration tool handlers for orders and reservations. Create either type from **Voice Agents → + New agent**.

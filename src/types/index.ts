@@ -78,11 +78,14 @@ export interface MenuCategory {
 
 export type AgentStatus = "online" | "idle" | "offline";
 
+export type VoiceAgentType = "native" | "platform";
+
 export interface VoiceAgent {
   /** Local omnidim_agents.id */
   id: string;
-  /** Omnidim platform agent id (used for API calls) */
+  /** Platform agent id (used for API calls) or native id (cv_native_*) */
   omnidimAgentId: string;
+  agentType: VoiceAgentType;
   name: string;
   role: string;
   status: AgentStatus;
@@ -94,6 +97,11 @@ export interface VoiceAgent {
   successRate: number;
   model: string;
   isPrimary?: boolean;
+  /** Native agent widget config (when agentType === 'native') */
+  widgetEnabled?: boolean;
+  greeting?: string;
+  accentColor?: string;
+  widgetPosition?: "bottom-right" | "bottom-left";
 }
 
 export type CallOutcome =
