@@ -15,7 +15,8 @@
     "db:migrate": "node database/migrate.mjs",
     "db:seed": "node database/migrate.mjs --seed",
     "test:connection": "node scripts/test-connection.js",
-    "test:db": "node scripts/test-db.mjs"
+    "test:db": "node scripts/test-db.mjs",
+    "test:cherry-voice-p0": "node scripts/test-cherry-voice-p0.mjs"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

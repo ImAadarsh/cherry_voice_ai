@@ -150,6 +150,10 @@ async function speakResponse(
     let audioChunks = await synthesizeWithChunks(session, text);
 
     if (audioChunks === 0 && !session.ttsAbort.signal.aborted) {
+      audioChunks = await synthesizeWithChunks(session, text);
+    }
+
+    if (audioChunks === 0 && !session.ttsAbort.signal.aborted) {
       const errMsg = "TTS returned no audio chunks";
       await logCherryVoiceTtsError(session, errMsg, text);
       emitSessionEvent(session, {
@@ -169,19 +173,36 @@ async function speakResponse(
     }
   } catch (err) {
     if ((err as Error).name !== "AbortError") {
-      const message = (err as Error).message;
-      await logCherryVoiceTtsError(session, message, text);
-      session.failed = true;
-      emitSessionEvent(session, {
-        type: "error",
-        payload: { message, recoverable: true },
-      });
-
+      let recovered = false;
       try {
-        const fallback = await getTtsFallbackPhrase(session.restaurantId);
-        await synthesizeWithChunks(session, fallback);
+        const retryChunks = await synthesizeWithChunks(session, text);
+        recovered = retryChunks > 0;
       } catch {
-        /* best-effort fallback */
+        /* retry failed */
+      }
+
+      if (!recovered) {
+        const message = (err as Error).message;
+        await logCherryVoiceTtsError(session, message, text);
+        session.failed = true;
+        emitSessionEvent(session, {
+          type: "error",
+          payload: { message, recoverable: true },
+        });
+
+        try {
+          const fallback = await getTtsFallbackPhrase(session.restaurantId);
+          const fallbackChunks = await synthesizeWithChunks(session, fallback);
+          if (fallbackChunks > 0) {
+            emitSessionEvent(session, {
+              type: "assistant_text",
+              payload: { text: fallback },
+            });
+            await logCherryVoiceTranscript(session, "assistant", fallback);
+          }
+        } catch {
+          /* best-effort fallback */
+        }
       }
     }
   } finally {
@@ -221,7 +242,9 @@ async function processUtterance(session: VoiceSessionRecord, utterance: string):
     setSessionState(session, "listening");
   } finally {
     session.processing = false;
+    const queued = session.pendingUtterance.trim();
     session.pendingUtterance = "";
+    if (queued) void processUtterance(session, queued);
   }
 }
 
@@ -277,7 +300,6 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
   stt.onTranscript((event) => {
     if (event.speechStarted && session.isSpeaking) {
       interruptSpeech(session);
-      emitSessionEvent(session, { type: "state", payload: { interrupted: true } });
     }
 
     if (!event.text) return;
@@ -292,7 +314,6 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
       scheduleUtterance();
     } else if (session.isSpeaking) {
       interruptSpeech(session);
-      emitSessionEvent(session, { type: "state", payload: { interrupted: true } });
     }
   });
 

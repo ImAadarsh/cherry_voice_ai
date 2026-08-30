@@ -29,6 +29,7 @@
     playbackContext: null,
     nextPlayTime: 0,
     status: "Ready",
+    uiState: "idle",
     transcript: "",
     reconnectAttempts: 0,
   };
@@ -87,9 +88,29 @@
   root.appendChild(fab);
   document.body.appendChild(root);
 
-  function setStatus(text) {
+  function setUiState(next) {
+    state.uiState = next;
+    fab.classList.remove("listening", "thinking", "speaking");
+    statusEl.classList.remove("listening", "thinking", "speaking");
+    if (next === "listening" || next === "thinking" || next === "speaking") {
+      fab.classList.add(next);
+      statusEl.classList.add(next);
+    }
+  }
+
+  function setStatus(text, uiState) {
     state.status = text;
     statusEl.textContent = text;
+    if (uiState) {
+      setUiState(uiState);
+      if (uiState === "thinking") {
+        subtitle.textContent = "Checking details — hang on a moment…";
+      } else if (uiState === "speaking") {
+        subtitle.textContent = "Agent is speaking…";
+      } else if (uiState === "listening") {
+        subtitle.textContent = "Voice ordering assistant";
+      }
+    }
   }
 
   function setError(msg) {
@@ -235,7 +256,7 @@
     fab.classList.remove("active");
     endBtn.disabled = true;
     startBtn.disabled = false;
-    setStatus("Ready");
+    setStatus("Ready", "idle");
   }
 
   function closeSession() {
@@ -278,7 +299,7 @@
       state.reconnectAttempts = 0;
       setError("");
       if (state.status === "Reconnecting...") {
-        setStatus("Listening");
+        setStatus("Listening", "listening");
       }
     };
 
@@ -294,9 +315,11 @@
           return;
         }
         if (data.state === "thinking") {
-          setStatus("Thinking…");
+          setStatus("Thinking…", "thinking");
         } else if (data.state === "speaking") {
-          setStatus("Speaking");
+          setStatus("Speaking", "speaking");
+        } else if (data.state === "listening") {
+          setStatus("Listening", "listening");
         } else if (data.state) {
           setStatus(data.state.charAt(0).toUpperCase() + data.state.slice(1));
         }
@@ -340,7 +363,7 @@
       if (!es) return;
 
       if (es.readyState === EventSource.CONNECTING) {
-        setStatus("Reconnecting...");
+        setStatus("Reconnecting...", "listening");
         setError("");
         return;
       }
@@ -348,7 +371,7 @@
       if (es.readyState === EventSource.CLOSED) {
         state.reconnectAttempts += 1;
         if (state.reconnectAttempts <= MAX_RECONNECT_ATTEMPTS) {
-          setStatus("Reconnecting...");
+          setStatus("Reconnecting...", "listening");
           setError("");
           setTimeout(function () {
             if (state.active && !state.closing && state.session) {
@@ -358,7 +381,7 @@
           return;
         }
         setError("Connection lost. Tap End, then Start call to try again.");
-        setStatus("Disconnected");
+        setStatus("Disconnected", "idle");
       }
     };
   }
@@ -388,7 +411,7 @@
 
   function startCall() {
     setError("");
-    setStatus("Connecting...");
+    setStatus("Connecting...", "listening");
     startBtn.disabled = true;
 
     var configUrl =
@@ -432,11 +455,11 @@
         return startMic(json.data);
       })
       .then(function () {
-        setStatus("Listening");
+        setStatus("Listening", "listening");
       })
       .catch(function (err) {
         setError(err.message || "Could not start call");
-        setStatus("Ready");
+        setStatus("Ready", "idle");
         startBtn.disabled = false;
         closeSession();
       });

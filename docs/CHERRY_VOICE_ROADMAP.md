@@ -119,7 +119,58 @@ Prioritized features to make Cherry Voice native agents faster, more responsive,
 | Silence prompt (45s) | **Shipped** |
 | TTS error logging + fallback | **Shipped** |
 | Thinking/speaking UI | **Shipped** |
-| Remaining P1/P2 items | Roadmap |
+| TTFA + turn latency waterfall (#3, #41) | **Shipped** — `turn_metrics` column, call detail drawer |
+| Parallel tool prefetch (#4) | **Shipped** — `Promise.all` in orchestrator |
+| Menu session cache (#5) | **Shipped** — 10 min TTL in session-store |
+| Gemini streaming → TTS (#6) | **Shipped** — sentence-boundary pipeline |
+| Inworld flash for fillers (#7) | **Shipped** — `inworld-tts-2-flash` on filler path |
+| Conversation memory (#13) | **Shipped** — session-store + system prompt |
+| Personality presets (#14) | **Shipped** — wizard + agent config |
+| Multilingual code-switching (#15) | **Shipped** — Hindi/English detection + prompt |
+| Order confirmation gate (#16) | **Shipped** — `order_confirmed` + prompt rules |
+| Menu disambiguation (#17) | **Shipped** — `get_menu` disambiguation list |
+| Menu aliases (#21) | **Shipped** — `settings.voice.menu_aliases` JSON |
+| Hours-aware (#22) | **Shipped** — hours status in prompt + create_order block |
+| Delivery zone (#23) | **Shipped** — validate on create/update_order |
+| Loyalty greeting (#24) | **Shipped** — lookup_customer at session start |
+| Daily specials (#25) | **Shipped** — menu `options.is_special` / tags |
+| TTS failover (#35) | **Shipped** — retry + Web Speech API client fallback |
+| STT reconnect (#36) | **Shipped** — Deepgram auto-reconnect |
+| Live debug panel (#42) | **Shipped** — Agents page live sessions |
+| TTS/STT error dashboard (#43) | **Shipped** — Agents page 7-day stats |
+| Phone orchestrator (#48) | **Shipped** — interface + docs |
+| PSTN audio bridge (#49) | **Shipped** — `audio-bridge.ts` stub |
+| Caller ID lookup (#50) | **Shipped** — `callerPhone` session field |
+| Payment link confirmation | **Shipped** — prompt + tool response |
+| Order readback | **Shipped** — prompt rules |
+| Remaining P2 items | Roadmap |
+
+### P2 (shipped Aug 2026)
+
+| Area | Status |
+|------|--------|
+| Deepgram endpointing per locale (#8) | **Shipped** — `deepgram-locale.ts` |
+| AudioWorklet mic capture (#9) | **Shipped** — `pcm-capture-processor.js` + panel/widget |
+| Edge SSE co-location (#10) | **Shipped** — `CHERRY_VOICE_SSE_EDGE_URL` stub + docs |
+| Proactive upsell (#18) | **Shipped** — system prompt after items set |
+| Emotional tone / low STT confidence (#19) | **Shipped** — confidence hook + prompt |
+| Post-call summary SMS (#20) | **Shipped** — optional Twilio on session end |
+| Allergen warnings (#26) | **Shipped** — `get_menu` + order tool responses |
+| Combo / meal deal builder (#27) | **Shipped** — `is_combo` categories + prompt |
+| Table number dine-in (#28) | **Shipped** — `table_number` → order notes |
+| Multi-location routing (#29) | **Shipped** — `branch_id` stub + prompt |
+| Festival / seasonal prompts (#30) | **Shipped** — `festival-prompts.ts` |
+| Text-only degradation (#37) | **Shipped** — after 2 TTS failures + UI banner |
+| Poor network detection (#38) | **Shipped** — failed audio POST counter in UI |
+| Max call duration 30min (#39) | **Shipped** — warn 25min, end 30min |
+| Circuit breaker for tools (#40) | **Shipped** — 5s timeout per tool |
+| Barge-in rate analytics (#44) | **Shipped** — `barge_in_count` + analytics API |
+| Tool success/failure breakdown (#45) | **Shipped** — `/api/cherry-voice/analytics` |
+| Zero audio chunk flag (#46) | **Shipped** — `zero_audio_chunks` in turn_metrics |
+| Session replay timeline (#47) | **Shipped** — call detail turn timeline |
+| Processing earcon | **Shipped** — `processing_earcon_enabled` setting |
+
+**Migration:** `014_cherry_voice_p2.sql` (earcon/SMS flags, `is_combo`, `branch_id`)
 
 ---
 
