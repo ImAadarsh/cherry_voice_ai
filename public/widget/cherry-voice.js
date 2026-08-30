@@ -37,6 +37,8 @@
     earconEnabled: false,
     workletNode: null,
     halfDuplexOpenAt: 0,
+    lastUserTranscriptAt: 0,
+    micWatchdogTimer: null,
     transcriptLines: [],
     lastAgentText: "",
     lastUserText: "",
@@ -104,6 +106,30 @@
   root.appendChild(fab);
   document.body.appendChild(root);
 
+  function openHalfDuplexMic(delayMs) {
+    state.halfDuplexOpenAt = Date.now() + (delayMs != null ? delayMs : 100);
+  }
+
+  function stopMicWatchdog() {
+    if (state.micWatchdogTimer) {
+      clearInterval(state.micWatchdogTimer);
+      state.micWatchdogTimer = null;
+    }
+  }
+
+  function startMicWatchdog() {
+    stopMicWatchdog();
+    state.micWatchdogTimer = setInterval(function () {
+      if (!state.active) return;
+      if (state.uiState !== "listening") return;
+      if (state.lastUserTranscriptAt > 0) return;
+      if (Date.now() < state.halfDuplexOpenAt) return;
+      if (state.halfDuplexOpenAt !== Number.POSITIVE_INFINITY) return;
+      console.warn("[cherry-voice] client mic watchdog: forcing mic resume");
+      openHalfDuplexMic();
+    }, 10000);
+  }
+
   function renderTranscript() {
     if (!state.transcriptLines.length) return;
     transcriptEl.textContent = state.transcriptLines.join("\n\n");
@@ -115,6 +141,7 @@
     if (role === "agent" && text === state.lastAgentText) return;
     if (role === "user") state.lastUserText = text;
     if (role === "agent") state.lastAgentText = text;
+    if (role === "user") state.lastUserTranscriptAt = Date.now();
     state.transcriptLines.push((role === "agent" ? "Agent: " : "You: ") + text);
     renderTranscript();
   }
@@ -344,7 +371,9 @@
     state.transcriptLines = [];
     state.lastAgentText = "";
     state.lastUserText = "";
+    state.lastUserTranscriptAt = 0;
     state.halfDuplexOpenAt = 0;
+    stopMicWatchdog();
     stopAudioPipeline();
     fab.classList.remove("active");
     endBtn.disabled = true;
@@ -406,7 +435,6 @@
           endCallGracefully();
           return;
         }
-        var prevUi = state.uiState;
         if (data.state === "thinking") {
           setStatus("Thinking…", "thinking");
           state.halfDuplexOpenAt = 0;
@@ -417,12 +445,13 @@
           setStatus("Speaking", "speaking");
           state.halfDuplexOpenAt = Number.POSITIVE_INFINITY;
         } else if (data.state === "listening") {
-          if (prevUi === "speaking" || prevUi === "tool_running") {
-            state.halfDuplexOpenAt = Date.now() + 100;
-          }
+          openHalfDuplexMic();
           setStatus("Listening", "listening");
         } else if (data.state) {
           setStatus(data.state.charAt(0).toUpperCase() + data.state.slice(1));
+        }
+        if (data.mic_resume) {
+          openHalfDuplexMic();
         }
       } catch (e) {}
     });
@@ -601,7 +630,13 @@
         return startMic(json.data);
       })
       .then(function () {
-        setStatus("Listening", "listening");
+        startMicWatchdog();
+        if (state.uiState !== "speaking" && state.uiState !== "tool_running") {
+          setStatus("Listening", "listening");
+          if (state.halfDuplexOpenAt === Number.POSITIVE_INFINITY) {
+            openHalfDuplexMic(0);
+          }
+        }
       })
       .catch(function (err) {
         setError(err.message || "Could not start call");

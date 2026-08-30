@@ -11,6 +11,10 @@ import { getGeminiApiKey } from "@/lib/platform-config";
 import { getCherryVoiceGeminiModel } from "../config";
 import { CHERRY_VOICE_TOOL_DECLARATIONS } from "../tools";
 
+const MAX_OUTPUT_TOKENS = 150;
+const MAX_CONTEXT_TURNS = 4;
+const MAX_SPOKEN_SENTENCES = 2;
+
 type GeminiContent = { role: "user" | "model"; parts: Part[] };
 
 type GeminiPartWithSignature = Part & {
@@ -191,10 +195,26 @@ function parseToolCalls(parts: Part[] | undefined): LlmTurnResult["toolCalls"] {
 
 function extractText(parts: Part[] | undefined): string {
   if (!parts) return "";
-  return parts
+  const raw = parts
     .map((p) => (p as { text?: string }).text ?? "")
     .join("")
     .trim();
+  return truncateToSpokenSentences(raw);
+}
+
+/** Keep replies short for voice — max two spoken sentences. */
+export function truncateToSpokenSentences(text: string, maxSentences = MAX_SPOKEN_SENTENCES): string {
+  const trimmed = text.trim();
+  if (!trimmed) return "";
+  const parts = trimmed.match(/[^.!?]+[.!?]+|[^.!?]+$/g);
+  if (!parts?.length) return trimmed;
+  return parts.slice(0, maxSentences).join(" ").trim();
+}
+
+/** Last N user/model turns only — reduces LLM latency and drift. */
+export function limitLlmHistory(messages: LlmMessage[], maxTurns = MAX_CONTEXT_TURNS): LlmMessage[] {
+  if (messages.length <= maxTurns * 2) return messages;
+  return messages.slice(-maxTurns * 2);
 }
 
 async function getModel(systemPrompt?: string) {
@@ -207,6 +227,9 @@ async function getModel(systemPrompt?: string) {
   return genAI.getGenerativeModel({
     model: modelName,
     systemInstruction: systemPrompt,
+    generationConfig: {
+      maxOutputTokens: MAX_OUTPUT_TOKENS,
+    },
     tools: [
       {
         functionDeclarations: CHERRY_VOICE_TOOL_DECLARATIONS as unknown as FunctionDeclaration[],
@@ -256,7 +279,7 @@ async function* streamGenerate(
   const responseParts = response.candidates?.[0]?.content?.parts;
   const parts = resolveResponseParts(accumulatedParts, responseParts);
   return {
-    text: extractText(parts) || fullText.trim(),
+    text: truncateToSpokenSentences(extractText(parts) || fullText.trim()),
     toolCalls: parseToolCalls(parts),
   };
 }
@@ -264,8 +287,9 @@ async function* streamGenerate(
 export function createGeminiLlmProvider(): LlmProvider {
   return {
     async chat(messages, options) {
-      const history = messages.slice(0, -1);
-      const last = messages[messages.length - 1];
+      const limited = limitLlmHistory(messages);
+      const history = limited.slice(0, -1);
+      const last = limited[limited.length - 1];
       const contents = messagesToContents(history);
 
       if (last?.role === "user" && last.content) {
@@ -277,8 +301,9 @@ export function createGeminiLlmProvider(): LlmProvider {
 
 
     async *chatStream(messages, options) {
-      const history = messages.slice(0, -1);
-      const last = messages[messages.length - 1];
+      const limited = limitLlmHistory(messages);
+      const history = limited.slice(0, -1);
+      const last = limited[limited.length - 1];
       const contents = messagesToContents(history);
       if (last?.role === "user" && last.content) {
         contents.push({ role: "user", parts: [{ text: last.content }] });
@@ -287,7 +312,7 @@ export function createGeminiLlmProvider(): LlmProvider {
     },
 
     async continueWithToolResults(messages, toolResults, options) {
-      const contents = messagesToContents(messages);
+      const contents = messagesToContents(limitLlmHistory(messages));
       const last = messages[messages.length - 1];
       const resultsAlreadyInHistory =
         last?.role === "user" &&

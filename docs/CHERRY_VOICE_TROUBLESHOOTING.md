@@ -114,6 +114,27 @@ pm2 logs cherry-voice-ai --lines 100 --nostream
 
 Look for `Inworld TTS`, `Deepgram`, `GoogleGenerativeAI`, or `[voice-session]` lines.
 
+## Latency optimization settings (current deploy)
+
+These defaults target low time-to-first-audio on web calls:
+
+| Layer | Setting | Notes |
+|-------|---------|--------|
+| **Deepgram STT** | `wss://api.deepgram.com/v1/listen` | Real-time streaming (not batch) |
+| | `model=nova-3` | Nova-3 model |
+| | `interim_results=true`, `interim_results_speed=true` | Faster partial transcripts |
+| | `punctuate=false`, `smart_format=false`, `diarize=false` | Less processing overhead |
+| **Inworld TTS** | `voice:stream` endpoint | PCM chunks streamed as synthesized |
+| | `sanitizeTextForTts()` | Strips markdown/emojis before synthesis |
+| **Gemini LLM** | `maxOutputTokens: 150` | Caps reply length |
+| | System prompt trimmed (~1000 tokens) | Menu via `get_menu` only, compact tools block |
+| | Last 4 turns in context | Shorter prompts, faster responses |
+| | `semantic-cache.ts` | Instant replies for greetings / menu intents |
+| **Half-duplex** | 100 ms tail after TTS | Mic resumes after agent speech |
+| | Mic watchdog (10 s) | Forces resume if stuck while listening |
+
+If latency regresses after a deploy, compare the above against `src/lib/voice/providers/` and `docs/CHERRY_VOICE_ROADMAP.md`.
+
 ## Future: Deepgram Flux / Voice Agent API
 
 Nova-3 + manual endpointing works but is sensitive to echo and overlapping speech. **Deepgram Flux** (conversational STT) or the **Voice Agent API** would improve turn detection and barge-in at the cost of a larger integration (new WS protocol, billing model, and orchestrator rewrite). Not in this sprint — track as P1 in `docs/CHERRY_VOICE_ROADMAP.md` if half-duplex + turn state machine still show gaps in prod.

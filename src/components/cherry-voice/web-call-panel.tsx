@@ -44,6 +44,8 @@ type CherryVoiceWebCallPanelProps = {
 
 const NETWORK_FAIL_THRESHOLD = 5;
 const WORKLET_URL = "/worklets/pcm-capture-processor.js";
+const HALF_DUPLEX_TAIL_MS = 100;
+const MIC_WATCHDOG_MS = 10_000;
 
 export function CherryVoiceWebCallPanel({
   agentId,
@@ -70,6 +72,32 @@ export function CherryVoiceWebCallPanel({
   const earconEnabledRef = useRef(false);
   const statusRef = useRef<CallStatus>("idle");
   const halfDuplexOpenAtRef = useRef(0);
+  const lastUserTranscriptAtRef = useRef(0);
+  const micWatchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const openHalfDuplexMic = useCallback((delayMs = HALF_DUPLEX_TAIL_MS) => {
+    halfDuplexOpenAtRef.current = Date.now() + delayMs;
+  }, []);
+
+  const stopMicWatchdog = useCallback(() => {
+    if (micWatchdogRef.current) {
+      clearInterval(micWatchdogRef.current);
+      micWatchdogRef.current = null;
+    }
+  }, []);
+
+  const startMicWatchdog = useCallback(() => {
+    stopMicWatchdog();
+    micWatchdogRef.current = setInterval(() => {
+      if (!activeRef.current) return;
+      if (statusRef.current !== "listening") return;
+      if (lastUserTranscriptAtRef.current > 0) return;
+      if (Date.now() < halfDuplexOpenAtRef.current) return;
+      if (halfDuplexOpenAtRef.current !== Number.POSITIVE_INFINITY) return;
+      console.warn("[cherry-voice] client mic watchdog: forcing mic resume");
+      openHalfDuplexMic();
+    }, MIC_WATCHDOG_MS);
+  }, [openHalfDuplexMic, stopMicWatchdog]);
 
   const stopPlayback = useCallback(() => {
     playbackRef.current?.stop();
@@ -115,11 +143,12 @@ export function CherryVoiceWebCallPanel({
     }
 
     stopAudioPipeline();
+    stopMicWatchdog();
     sessionRef.current = null;
     statusRef.current = "ended";
     setStatus("ended");
     onEnded?.();
-  }, [onEnded, stopAudioPipeline]);
+  }, [onEnded, stopAudioPipeline, stopMicWatchdog]);
 
   const mapServerState = useCallback((state?: string): CallStatus | null => {
     switch (state) {
@@ -149,7 +178,11 @@ export function CherryVoiceWebCallPanel({
 
       es.addEventListener("state", (ev) => {
         try {
-          const data = JSON.parse(ev.data) as { state?: string; interrupted?: boolean };
+          const data = JSON.parse(ev.data) as {
+            state?: string;
+            interrupted?: boolean;
+            mic_resume?: boolean;
+          };
           if (data.interrupted) {
             stopPlayback();
           }
@@ -159,18 +192,18 @@ export function CherryVoiceWebCallPanel({
           }
           const mapped = mapServerState(data.state);
           if (mapped) {
-            const prev = statusRef.current;
             statusRef.current = mapped;
             setStatus(mapped);
-            if (
-              mapped === "listening" &&
-              (prev === "speaking" || prev === "tool_running")
-            ) {
-              halfDuplexOpenAtRef.current = Date.now() + 100;
-            }
-            if (mapped === "speaking" || mapped === "tool_running") {
+            if (mapped === "listening") {
+              openHalfDuplexMic();
+            } else if (mapped === "thinking") {
+              halfDuplexOpenAtRef.current = 0;
+            } else if (mapped === "speaking" || mapped === "tool_running") {
               halfDuplexOpenAtRef.current = Number.POSITIVE_INFINITY;
             }
+          }
+          if (data.mic_resume) {
+            openHalfDuplexMic();
           }
         } catch {
           /* ignore */
@@ -187,6 +220,7 @@ export function CherryVoiceWebCallPanel({
           if (!data.text) return;
 
           if (data.isFinal && data.role === "user") {
+            lastUserTranscriptAtRef.current = Date.now();
             setTranscript((prev) => {
               const last = prev[prev.length - 1];
               if (last?.role === "user" && last.text === data.text) return prev;
@@ -304,7 +338,7 @@ export function CherryVoiceWebCallPanel({
         }
       };
     },
-    [endCall, mapServerState, stopPlayback],
+    [endCall, mapServerState, openHalfDuplexMic, stopPlayback],
   );
 
   const startMic = useCallback(async (session: CherryVoiceSession) => {
@@ -318,6 +352,7 @@ export function CherryVoiceWebCallPanel({
       shouldDetectUserSpeech: () =>
         statusRef.current === "speaking" || statusRef.current === "tool_running",
       shouldUploadAudio: () => {
+        if (!activeRef.current) return false;
         const s = statusRef.current;
         if (s === "speaking" || s === "tool_running") return false;
         return Date.now() >= halfDuplexOpenAtRef.current;
@@ -344,6 +379,8 @@ export function CherryVoiceWebCallPanel({
     setTextOnlyMode(false);
     setNetworkWarning(null);
     setHeadphonesTip(true);
+    lastUserTranscriptAtRef.current = 0;
+    halfDuplexOpenAtRef.current = 0;
     setStatus("connecting");
     statusRef.current = "connecting";
     closingRef.current = false;
@@ -358,8 +395,12 @@ export function CherryVoiceWebCallPanel({
       activeRef.current = true;
       connectEvents(data);
       await startMic(data);
-      statusRef.current = "listening";
-      setStatus("listening");
+      startMicWatchdog();
+      if (statusRef.current === "connecting") {
+        statusRef.current = "listening";
+        setStatus("listening");
+        openHalfDuplexMic(0);
+      }
       toast.success("Web call connected");
     } catch (e) {
       closingRef.current = true;
@@ -378,16 +419,17 @@ export function CherryVoiceWebCallPanel({
     } finally {
       setBusy(false);
     }
-  }, [agentId, busy, connectEvents, startMic, stopAudioPipeline]);
+  }, [agentId, busy, connectEvents, openHalfDuplexMic, startMic, startMicWatchdog, stopAudioPipeline]);
 
   useEffect(() => {
     return () => {
       closingRef.current = true;
       activeRef.current = false;
       if (eventSourceRef.current) eventSourceRef.current.close();
+      stopMicWatchdog();
       stopAudioPipeline();
     };
-  }, [stopAudioPipeline]);
+  }, [stopAudioPipeline, stopMicWatchdog]);
 
   const isLive = status === "connecting" || status === "listening" || status === "thinking" || status === "speaking" || status === "tool_running";
   const isThinking = status === "thinking";

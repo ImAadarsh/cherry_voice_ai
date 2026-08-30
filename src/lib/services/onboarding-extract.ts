@@ -270,7 +270,11 @@ export async function generateAgentPrompt(restaurantId: number): Promise<string>
   if (hours) sections.push(`Hours:\n${hours}`);
   if (deliveryZones) sections.push(`Delivery area:\n${deliveryZones}`);
   if (policies) sections.push(`Policies:\n${policies}`);
-  if (ctx?.menu_summary) sections.push(`Menu overview:\n${ctx.menu_summary}`);
+  if (ctx?.menu_summary) {
+    sections.push(
+      "Menu: use get_menu tool for items and prices — do not memorize or dump the full menu in replies.",
+    );
+  }
 
   sections.push(`All prices are in ${currency} (minor units stored as cents).`);
   sections.push(INTEGRATION_TOOLS_PROMPT);

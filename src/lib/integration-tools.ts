@@ -9,6 +9,18 @@ export const VOICE_STYLE_PROMPT = `## Voice response rules (critical)
 - Read back items, quantities, order type, and total before placing an order. Get an explicit yes before create_order.
 - Responses are spoken aloud — no bullet lists, markdown, or long paragraphs.`;
 
+/** Prompt block for voice agents — compact to keep system prompt under ~1000 tokens. */
+export const VOICE_INTEGRATION_TOOLS_PROMPT = `## Tools
+Use tools for real actions — never invent ids or prices.
+- **get_menu** — When caller asks about menu/prices; summarize briefly.
+- **create_order** — Once per call after readback + order_confirmed: true.
+- **update_order** — Changes after first create_order.
+- **lookup_customer** — Personalize by phone.
+- **send_payment_link** — After order confirmed.
+- **create_reservation** — Table booking.
+- **get_restaurant_info** — Hours, delivery, policies.
+Never quote prices from memory — use get_menu.`;
+
 /** Prompt block appended to agents so they know which custom API tools are available. */
 export const INTEGRATION_TOOLS_PROMPT = `## API tools
 Use these tools to complete real actions — never invent order ids or payment links.

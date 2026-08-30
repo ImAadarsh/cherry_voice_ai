@@ -1,6 +1,6 @@
 import "server-only";
 import { createDeepgramSttProvider } from "./providers/deepgram-stt";
-import { createGeminiLlmProvider } from "./providers/gemini-llm";
+import { createGeminiLlmProvider, truncateToSpokenSentences } from "./providers/gemini-llm";
 import { createInworldTtsProvider } from "./providers/inworld-tts";
 import type { LlmMessage, LlmTurnResult } from "./providers/types";
 import {
@@ -49,6 +49,8 @@ import {
 import { executeCherryVoiceTool } from "./tools";
 import { sanitizeVoiceError } from "./user-errors";
 import { resolveInworldVoiceId } from "./inworld-voices";
+import { matchSemanticCache } from "./semantic-cache";
+import { sanitizeTextForTts } from "./tts-sanitize";
 
 const sttBySession = new Map<string, ReturnType<typeof createDeepgramSttProvider>>();
 const llm = createGeminiLlmProvider();
@@ -71,6 +73,11 @@ const MIN_UTTERANCE_CHARS = 3;
 const THINKING_FILLER_DELAY_MS = 280;
 /** Resume STT after TTS ends (matches client half-duplex tail). */
 const HALF_DUPLEX_TAIL_MS = 100;
+/** Warn and force mic resume if caller is silent too long after agent speech. */
+const MIC_WATCHDOG_MS = 10_000;
+const MIC_WATCHDOG_INTERVAL_MS = 2_000;
+/** Keep only recent exchanges in LLM context. */
+const MAX_LLM_TURN_HISTORY = 4;
 
 type SpeakOptions = {
   skipTranscriptLog?: boolean;
@@ -213,6 +220,12 @@ async function executeToolCalls(
   );
 }
 
+function recentSessionMessages(
+  messages: VoiceSessionRecord["messages"],
+): VoiceSessionRecord["messages"] {
+  return messages.slice(-MAX_LLM_TURN_HISTORY * 2);
+}
+
 async function streamLlmToSpeech(
   session: VoiceSessionRecord,
   userText: string,
@@ -223,10 +236,49 @@ async function streamLlmToSpeech(
 
   const systemPrompt = await buildVoiceSystemPrompt(session, userText);
   const baseCount = session.messages.length;
+  const history = recentSessionMessages(session.messages);
   const messages: LlmMessage[] = [
-    ...sessionMessagesToLlm(session.messages),
+    ...sessionMessagesToLlm(history),
     { role: "user", content: userText },
   ];
+
+  const cacheHit = matchSemanticCache(userText);
+  if (cacheHit) {
+    timing.llmStartAt = Date.now();
+    timing.llmEndAt = Date.now();
+    const cachedText = truncateToSpokenSentences(cacheHit.text);
+    await speakResponse(session, cachedText, { timing });
+
+    if (cacheHit.toolCalls?.length) {
+      timing.toolStartAt = Date.now();
+      setSessionState(session, "tool_running");
+      emitSessionEvent(session, {
+        type: "tool_start",
+        payload: { tools: cacheHit.toolCalls.map((c) => c.name) },
+      });
+
+      session.llmAbort = new AbortController();
+      const toolResults = await executeToolCalls(session, cacheHit.toolCalls);
+      timing.toolEndAt = Date.now();
+
+      messages.push({ role: "model", content: cachedText, toolCalls: cacheHit.toolCalls });
+      const followUp = await llm.continueWithToolResults(messages, toolResults, {
+        systemPrompt,
+        signal: session.llmAbort.signal,
+      });
+      const reply = truncateToSpokenSentences(followUp.text || cachedText);
+      if (!isUtteranceStale(session, utteranceId)) {
+        await speakResponse(session, reply, { timing });
+        appendTurnToSession(session, baseCount, messages, userText, reply);
+      }
+      return reply;
+    }
+
+    if (!isUtteranceStale(session, utteranceId)) {
+      appendTurnToSession(session, baseCount, messages, userText, cachedText);
+    }
+    return cachedText;
+  }
 
   session.llmAbort = new AbortController();
   const llmSignal = session.llmAbort.signal;
@@ -299,7 +351,7 @@ async function streamLlmToSpeech(
     }
 
     if (!isUtteranceStale(session, utteranceId)) {
-      await speakResponse(session, reply.trim(), { timing });
+      await speakResponse(session, truncateToSpokenSentences(reply.trim()), { timing });
       appendTurnToSession(session, baseCount, messages, userText, reply);
     }
     return reply;
@@ -307,11 +359,11 @@ async function streamLlmToSpeech(
 
   if (buffer.trim()) {
     agentText += (agentText ? " " : "") + buffer.trim();
-    await speakResponse(session, buffer.trim(), { timing, skipTranscriptLog: true });
+    await speakResponse(session, truncateToSpokenSentences(buffer.trim()), { timing, skipTranscriptLog: true });
     buffer = "";
   }
 
-  const finalText = agentText || turn.text;
+  const finalText = truncateToSpokenSentences(agentText || turn.text);
   if (finalText) {
     if (!agentText) {
       await speakResponse(session, finalText, { timing });
@@ -419,6 +471,9 @@ async function speakResponseNow(
 ): Promise<void> {
   if (generation !== session.speakGeneration || session.state === "ended") return;
 
+  const speakable = sanitizeTextForTts(trimmed);
+  if (!speakable) return;
+
   session.activeSpeakCount += 1;
   session.ttsAbort = new AbortController();
   session.isSpeaking = true;
@@ -427,8 +482,8 @@ async function speakResponseNow(
   setSessionState(session, "speaking");
 
   if (!options?.skipTranscriptLog) {
-    emitSessionEvent(session, { type: "assistant_text", payload: { text: trimmed } });
-    await logCherryVoiceTranscript(session, "assistant", trimmed);
+    emitSessionEvent(session, { type: "assistant_text", payload: { text: speakable } });
+    await logCherryVoiceTranscript(session, "assistant", speakable);
   }
 
   if (session.textOnlyMode) {
@@ -442,18 +497,18 @@ async function speakResponseNow(
   }
 
   try {
-    let audioChunks = await synthesizeWithRetries(session, trimmed, options);
+    let audioChunks = await synthesizeWithRetries(session, speakable, options);
 
     if (audioChunks === 0 && !session.ttsAbort.signal.aborted) {
       session.ttsFailureCount += 1;
       const errMsg = "TTS returned no audio chunks";
-      await logCherryVoiceTtsError(session, errMsg, trimmed);
+      await logCherryVoiceTtsError(session, errMsg, speakable);
       emitSessionEvent(session, {
         type: "error",
         payload: { message: sanitizeVoiceError(errMsg), recoverable: true },
       });
 
-      await emitTtsFallback(session, trimmed, options?.timing);
+      await emitTtsFallback(session, speakable, options?.timing);
 
       const fallbackPhrase = await getTtsFallbackPhrase(session.restaurantId);
       const fallbackChunks = await synthesizeWithChunks(session, fallbackPhrase, options);
@@ -470,13 +525,13 @@ async function speakResponseNow(
     if ((err as Error).name !== "AbortError" && !session.ttsAbort?.signal.aborted) {
       session.ttsFailureCount += 1;
       const message = (err as Error).message;
-      await logCherryVoiceTtsError(session, message, trimmed);
+      await logCherryVoiceTtsError(session, message, speakable);
       session.failed = true;
       emitSessionEvent(session, {
         type: "error",
         payload: { message: sanitizeVoiceError(message), recoverable: true },
       });
-      await emitTtsFallback(session, trimmed, options?.timing);
+      await emitTtsFallback(session, speakable, options?.timing);
       try {
         const fallbackPhrase = await getTtsFallbackPhrase(session.restaurantId);
         const fallbackChunks = await synthesizeWithChunks(session, fallbackPhrase, options);
@@ -497,7 +552,9 @@ async function speakResponseNow(
     session.speakingStartedAt = null;
     if (session.activeSpeakCount === 0) {
       session.isSpeaking = false;
+      session.sttUnblocked = false;
       session.halfDuplexOpenAt = Date.now() + HALF_DUPLEX_TAIL_MS;
+      session.agentSpeechEndedAt = Date.now();
       if (session.state === "speaking" || session.state === "tool_running") {
         setSessionState(session, "listening");
       }
@@ -539,6 +596,7 @@ async function processUtterance(
     payload: { text, isFinal: true, role: "user" },
   });
   await logCherryVoiceTranscript(session, "user", text);
+  session.lastUserTranscriptAt = Date.now();
 
   let reply = "";
   let zeroAudio = false;
@@ -606,6 +664,42 @@ async function maybeLoyaltyGreeting(session: VoiceSessionRecord): Promise<string
     return `Welcome back, ${name}!`;
   }
   return null;
+}
+
+function forceMicResume(session: VoiceSessionRecord, reason: string): void {
+  session.sttUnblocked = true;
+  session.isSpeaking = false;
+  session.halfDuplexOpenAt = 0;
+  console.warn(`[cherry-voice] mic resume (${reason}) session=${session.id}`);
+  if (session.state !== "ended") {
+    setSessionState(session, "listening");
+    emitSessionEvent(session, {
+      type: "state",
+      payload: { state: "listening", mic_resume: true },
+    });
+  }
+}
+
+function startMicWatchdog(session: VoiceSessionRecord): void {
+  if (session.micWatchdogTimer) return;
+  session.micWatchdogTimer = setInterval(() => {
+    if (session.state !== "listening" || session.processing || session.isSpeaking) return;
+    if (!session.agentSpeechEndedAt) return;
+    const sinceAgentSpeech = Date.now() - session.agentSpeechEndedAt;
+    if (sinceAgentSpeech < MIC_WATCHDOG_MS) return;
+    const sinceUser = session.lastUserTranscriptAt
+      ? Date.now() - session.lastUserTranscriptAt
+      : sinceAgentSpeech;
+    if (sinceUser < MIC_WATCHDOG_MS) return;
+    forceMicResume(session, "no_user_transcript_10s");
+  }, MIC_WATCHDOG_INTERVAL_MS);
+}
+
+function stopMicWatchdog(session: VoiceSessionRecord): void {
+  if (session.micWatchdogTimer) {
+    clearInterval(session.micWatchdogTimer);
+    session.micWatchdogTimer = null;
+  }
 }
 
 function startSilenceMonitor(session: VoiceSessionRecord): void {
@@ -746,6 +840,7 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
   await stt.connect();
   setSessionState(session, "listening");
   startSilenceMonitor(session);
+  startMicWatchdog(session);
 
   startCallDurationMonitor(
     session,
@@ -794,6 +889,7 @@ export async function stopVoiceOrchestrator(sessionId: string): Promise<void> {
   const session = getVoiceSession(sessionId);
   if (session) {
     stopSilenceMonitor(session);
+    stopMicWatchdog(session);
     stopCallDurationMonitor(session);
     interruptSpeech(session);
     setSessionState(session, "ended");

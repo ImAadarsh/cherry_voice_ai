@@ -1,7 +1,7 @@
 import "server-only";
 import type { SttProvider, SttTranscriptEvent } from "./types";
 import { getDeepgramEndpointing } from "../deepgram-locale";
-import { getCherryVoiceSttModel, getDeepgramApiKey } from "../config";
+import { getDeepgramApiKey } from "../config";
 
 type DeepgramMessage = {
   type?: string;
@@ -103,19 +103,21 @@ export function createDeepgramSttProvider(options?: {
     const apiKey = await getDeepgramApiKey();
     if (!apiKey) throw new Error("DEEPGRAM_API_KEY is not configured");
 
-    const model = await getCherryVoiceSttModel();
+    // Nova-3 streaming via /v1/listen — minimal features for lowest latency.
     const params = new URLSearchParams({
-      model,
+      model: "nova-3",
       language,
       encoding: "linear16",
       sample_rate: String(sampleRate),
       channels: "1",
       interim_results: "true",
+      interim_results_speed: "true",
       utterance_end_ms: endpointing.utterance_end_ms,
       endpointing: endpointing.endpointing,
       vad_events: "true",
-      punctuate: "true",
-      smart_format: "true",
+      punctuate: "false",
+      smart_format: "false",
+      diarize: "false",
     });
 
     ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${params}`, ["token", apiKey]);

@@ -78,6 +78,11 @@ export interface VoiceSessionRecord {
   /** User explicitly interrupted agent speech — allow STT through half-duplex gate. */
   sttUnblocked: boolean;
   halfDuplexOpenAt: number;
+  /** Last time agent TTS finished (for mic watchdog). */
+  agentSpeechEndedAt: number;
+  /** Last time a user transcript was logged. */
+  lastUserTranscriptAt: number;
+  micWatchdogTimer: ReturnType<typeof setInterval> | null;
 }
 
 const sessions = new Map<string, VoiceSessionRecord>();
@@ -160,6 +165,9 @@ export function createVoiceSession(input: {
     postCallSmsEnabled: input.postCallSmsEnabled ?? false,
     sttUnblocked: false,
     halfDuplexOpenAt: 0,
+    agentSpeechEndedAt: 0,
+    lastUserTranscriptAt: 0,
+    micWatchdogTimer: null,
   };
   sessions.set(session.id, session);
   return session;

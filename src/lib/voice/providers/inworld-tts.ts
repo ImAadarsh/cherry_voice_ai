@@ -1,6 +1,7 @@
 import "server-only";
 import type { TtsProvider, TtsSynthesisOptions } from "./types";
 import { getCherryVoiceTtsModel, getInworldApiKey } from "../config";
+import { sanitizeTextForTts } from "../tts-sanitize";
 import { stripWavHeader } from "../wav-utils";
 
 const TTS_STREAM_TIMEOUT_MS = 45_000;
@@ -33,7 +34,7 @@ export function createInworldTtsProvider(): TtsProvider {
       const apiKey = await getInworldApiKey();
       if (!apiKey) throw new Error("INWORLD_API_KEY is not configured");
 
-      const text = options.text.trim();
+      const text = sanitizeTextForTts(options.text);
       if (!text) return;
 
       const modelId = options.modelId ?? (await getCherryVoiceTtsModel());
