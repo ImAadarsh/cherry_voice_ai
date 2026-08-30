@@ -1,7 +1,7 @@
 import "server-only";
 import type { CustomApiIntegrationInput } from "@omnidim-ai/sdk";
 import { env } from "@/lib/env";
-import { buildIntegrationUrl } from "@/lib/app-base-url";
+import { buildIntegrationUrl, isUnreachableFromCloud } from "@/lib/app-base-url";
 import { getOmnidim } from "@/lib/omnidim";
 import {
   getOrCreateIntegrationApiKey,
@@ -85,6 +85,9 @@ export const CHERRY_VOICE_TOOLS: CherryVoiceToolDef[] = [
   },
 ];
 
+type OmnidimClient = Awaited<ReturnType<typeof getOmnidim>>;
+type OrgIntegration = { id: number; name: string; url?: string };
+
 function extractIntegrationId(res: Record<string, unknown>): number | null {
   const integration = res.integration as Record<string, unknown> | undefined;
   if (integration?.id != null) return Number(integration.id);
@@ -93,13 +96,63 @@ function extractIntegrationId(res: Record<string, unknown>): number | null {
   return null;
 }
 
+function normalizeUrl(url: string | undefined): string {
+  return (url ?? "").replace(/\/$/, "");
+}
+
+function integrationUrlMatchesTool(
+  url: string | undefined,
+  toolPath: string,
+  expectedUrl: string,
+): boolean {
+  if (!url) return false;
+  if (normalizeUrl(url) === normalizeUrl(expectedUrl)) return true;
+  try {
+    const path = new URL(url).pathname;
+    return path === toolPath || path.endsWith(toolPath);
+  } catch {
+    return url.endsWith(toolPath);
+  }
+}
+
+function isDuplicateIntegrationSignal(err: unknown, body?: Record<string, unknown>): boolean {
+  const parts: string[] = [];
+  if (err instanceof Error) parts.push(err.message);
+  if (body) {
+    for (const key of ["error", "message", "error_description", "detail"]) {
+      const val = body[key];
+      if (typeof val === "string") parts.push(val);
+    }
+  }
+  const msg = parts.join(" ").toLowerCase();
+  return (
+    msg.includes("already exists") ||
+    msg.includes("duplicate") ||
+    msg.includes("name must be unique") ||
+    msg.includes("integration with this name")
+  );
+}
+
+function buildIntegrationNameCandidates(
+  toolName: string,
+  restaurantId: number,
+  baseUrl: string,
+): string[] {
+  const candidates = [toolName, `${toolName}_${restaurantId}`];
+  if (!isUnreachableFromCloud(baseUrl)) {
+    candidates.push(`${toolName}_prod`);
+  }
+  return [...new Set(candidates)];
+}
+
 function buildToolIntegration(
   tool: CherryVoiceToolDef,
   baseUrl: string,
   apiKey: string,
+  integrationName = tool.name,
 ): CustomApiIntegrationInput {
   return {
-    name: tool.name,
+    name: integrationName,
     url: buildIntegrationUrl(baseUrl, tool.path),
     method: tool.method,
     description: tool.description,
@@ -114,7 +167,7 @@ function buildToolIntegration(
 }
 
 async function fetchAgentIntegrationMap(
-  omnidim: Awaited<ReturnType<typeof getOmnidim>>,
+  omnidim: OmnidimClient,
   agentId: string,
 ): Promise<Map<string, { id: number; url?: string }>> {
   const res = (await omnidim.integrations.listForAgent(agentId)) as {
@@ -127,21 +180,161 @@ async function fetchAgentIntegrationMap(
   return map;
 }
 
-async function createAndAttachIntegration(
-  omnidim: Awaited<ReturnType<typeof getOmnidim>>,
+function findAttachedIntegrationWithUrl(
+  liveIntegrations: Map<string, { id: number; url?: string }>,
+  expectedUrl: string,
+  toolPath: string,
+): number | null {
+  const normalizedExpected = normalizeUrl(expectedUrl);
+  for (const row of liveIntegrations.values()) {
+    if (normalizeUrl(row.url) === normalizedExpected) return row.id;
+    if (integrationUrlMatchesTool(row.url, toolPath, expectedUrl)) {
+      if (normalizeUrl(row.url) === normalizedExpected) return row.id;
+    }
+  }
+  return null;
+}
+
+async function fetchOrgIntegrations(omnidim: OmnidimClient): Promise<OrgIntegration[]> {
+  const res = (await omnidim.integrations.list()) as {
+    integrations?: OrgIntegration[];
+  };
+  return res.integrations ?? [];
+}
+
+function findReusableOrgIntegration(
+  orgIntegrations: OrgIntegration[],
+  tool: CherryVoiceToolDef,
+  expectedUrl: string,
+  nameCandidates: string[],
+): OrgIntegration | undefined {
+  const normalizedExpected = normalizeUrl(expectedUrl);
+
+  for (const integration of orgIntegrations) {
+    if (normalizeUrl(integration.url) === normalizedExpected) return integration;
+  }
+
+  for (const name of nameCandidates) {
+    const hit = orgIntegrations.find((row) => row.name === name);
+    if (hit && normalizeUrl(hit.url) === normalizedExpected) return hit;
+  }
+
+  for (const integration of orgIntegrations) {
+    if (
+      nameCandidates.includes(integration.name) &&
+      integrationUrlMatchesTool(integration.url, tool.path, expectedUrl) &&
+      normalizeUrl(integration.url) === normalizedExpected
+    ) {
+      return integration;
+    }
+  }
+
+  return undefined;
+}
+
+async function tryCreateCustomApi(
+  omnidim: OmnidimClient,
+  payload: CustomApiIntegrationInput,
+): Promise<number | null> {
+  try {
+    const created = (await omnidim.integrations.createCustomApi(payload)) as Record<string, unknown>;
+    const integrationId = extractIntegrationId(created);
+    if (integrationId != null) return integrationId;
+    if (isDuplicateIntegrationSignal(null, created)) {
+      console.warn(
+        `[agent-provisioning] createCustomApi for "${payload.name}" returned no id (likely duplicate)`,
+      );
+      return null;
+    }
+    console.warn(
+      `[agent-provisioning] createCustomApi for "${payload.name}" returned no integration id`,
+      created,
+    );
+    return null;
+  } catch (err) {
+    if (isDuplicateIntegrationSignal(err)) {
+      console.warn(
+        `[agent-provisioning] Integration "${payload.name}" already exists at org level`,
+        err instanceof Error ? err.message : err,
+      );
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function resolveIntegrationId(
+  omnidim: OmnidimClient,
+  tool: CherryVoiceToolDef,
+  baseUrl: string,
+  apiKey: string,
+  restaurantId: number,
+): Promise<number> {
+  const expectedUrl = buildIntegrationUrl(baseUrl, tool.path);
+  const nameCandidates = buildIntegrationNameCandidates(tool.name, restaurantId, baseUrl);
+
+  for (const name of nameCandidates) {
+    const integrationId = await tryCreateCustomApi(
+      omnidim,
+      buildToolIntegration(tool, baseUrl, apiKey, name),
+    );
+    if (integrationId != null) {
+      if (name !== tool.name) {
+        console.info(
+          `[agent-provisioning] Created ${tool.name} as "${name}" (id ${integrationId}) for restaurant ${restaurantId}`,
+        );
+      }
+      return integrationId;
+    }
+
+    const orgIntegrations = await fetchOrgIntegrations(omnidim);
+    const reusable = findReusableOrgIntegration(orgIntegrations, tool, expectedUrl, [name, ...nameCandidates]);
+    if (reusable) {
+      console.info(
+        `[agent-provisioning] Reusing integration ${reusable.id} ("${reusable.name}") for ${tool.name} (restaurant ${restaurantId})`,
+      );
+      return reusable.id;
+    }
+  }
+
+  const orgIntegrations = await fetchOrgIntegrations(omnidim);
+  const byUrl = orgIntegrations.find(
+    (row) => normalizeUrl(row.url) === normalizeUrl(expectedUrl),
+  );
+  if (byUrl) {
+    console.info(
+      `[agent-provisioning] Reusing integration ${byUrl.id} by URL match for ${tool.name}`,
+    );
+    return byUrl.id;
+  }
+
+  throw new Error(`Voice AI platform did not return an integration id for ${tool.name}`);
+}
+
+async function attachIntegrationToAgent(
+  omnidim: OmnidimClient,
+  agentId: string,
+  integrationId: number,
+): Promise<void> {
+  try {
+    await omnidim.integrations.addToAgent(agentId, integrationId);
+  } catch (err) {
+    const live = await fetchAgentIntegrationMap(omnidim, agentId);
+    const alreadyAttached = [...live.values()].some((row) => row.id === integrationId);
+    if (!alreadyAttached) throw err;
+  }
+}
+
+async function resolveAndAttachIntegration(
+  omnidim: OmnidimClient,
   tool: CherryVoiceToolDef,
   agentId: string,
   baseUrl: string,
   apiKey: string,
   restaurantId: number,
 ): Promise<number> {
-  const payload = buildToolIntegration(tool, baseUrl, apiKey);
-  const created = (await omnidim.integrations.createCustomApi(payload)) as Record<string, unknown>;
-  const integrationId = extractIntegrationId(created);
-  if (integrationId == null) {
-    throw new Error(`Omnidim did not return an integration id for ${tool.name}`);
-  }
-  await omnidim.integrations.addToAgent(agentId, integrationId);
+  const integrationId = await resolveIntegrationId(omnidim, tool, baseUrl, apiKey, restaurantId);
+  await attachIntegrationToAgent(omnidim, agentId, integrationId);
   await upsertAgentIntegration({
     restaurantId,
     omnidimAgentId: agentId,
@@ -154,6 +347,7 @@ async function createAndAttachIntegration(
 /**
  * Create Omnidim custom API integrations for all Cherry Voice tools and attach
  * them to the agent. Re-provisions any tool whose URL no longer matches APP_BASE_URL.
+ * Idempotent: reuses org-level integrations when names collide or URLs already match.
  */
 export async function provisionAgentWithIntegrations(
   restaurantId: number,
@@ -171,9 +365,22 @@ export async function provisionAgentWithIntegrations(
   for (const tool of CHERRY_VOICE_TOOLS) {
     const expectedUrl = buildIntegrationUrl(baseUrl, tool.path);
     const knownId = existingByTool.get(tool.name);
-    const live = knownId != null ? liveIntegrations.get(tool.name) : undefined;
+    const attachedId = findAttachedIntegrationWithUrl(liveIntegrations, expectedUrl, tool.path);
 
-    if (knownId != null && live?.url === expectedUrl) {
+    if (attachedId != null) {
+      integrationIds[tool.name] = attachedId;
+      if (knownId !== attachedId) {
+        await upsertAgentIntegration({
+          restaurantId,
+          omnidimAgentId: agentId,
+          omnidimIntegrationId: attachedId,
+          toolName: tool.name,
+        });
+      }
+      continue;
+    }
+
+    if (knownId != null && liveIntegrations.get(tool.name)?.url === expectedUrl) {
       integrationIds[tool.name] = knownId;
       continue;
     }
@@ -186,7 +393,7 @@ export async function provisionAgentWithIntegrations(
       }
     }
 
-    integrationIds[tool.name] = await createAndAttachIntegration(
+    integrationIds[tool.name] = await resolveAndAttachIntegration(
       omnidim,
       tool,
       agentId,

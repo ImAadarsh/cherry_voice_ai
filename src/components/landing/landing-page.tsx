@@ -7,7 +7,7 @@ import { LandingDashboardShowcase } from "@/components/landing/landing-dashboard
 import { LandingFeatures } from "@/components/landing/landing-features";
 import { LandingVoiceDemo } from "@/components/landing/landing-voice-demo";
 import { LandingBeyondRestaurants } from "@/components/landing/landing-beyond-restaurants";
-import { LandingPricing } from "@/components/landing/landing-pricing";
+import { LandingContact } from "@/components/landing/landing-contact";
 import { LandingTestimonials } from "@/components/landing/landing-testimonials";
 import { LandingFaq } from "@/components/landing/landing-faq";
 import { LandingCta } from "@/components/landing/landing-cta";
@@ -26,7 +26,7 @@ export function LandingPage() {
         <LandingFeatures />
         <LandingVoiceDemo />
         <LandingBeyondRestaurants />
-        <LandingPricing />
+        <LandingContact />
         <LandingTestimonials />
         <LandingFaq />
         <LandingCta />

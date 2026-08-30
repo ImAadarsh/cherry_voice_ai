@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { ok, fail, readJson } from "@/lib/http";
 import { requireRestaurantId } from "@/lib/route-auth";
-import { env } from "@/lib/env";
 import { isOmnidimConfigured } from "@/lib/platform-config";
 import { getOmnidim } from "@/lib/omnidim";
-import { upsertAgentMapping } from "@/lib/repositories/agents";
-import { provisionAgentWithIntegrations } from "@/lib/services/agent-provisioning";
+import { listAgents, upsertAgentMapping } from "@/lib/repositories/agents";
+import { listAgentIntegrations } from "@/lib/repositories/integration-keys";
+import { sanitizePlatformError } from "@/lib/platform-errors";
+import { CHERRY_VOICE_TOOLS, provisionAgentWithIntegrations } from "@/lib/services/agent-provisioning";
 import { generateAgentPrompt } from "@/lib/services/onboarding-extract";
 
 export const runtime = "nodejs";
@@ -52,6 +53,30 @@ export async function POST(req: Request) {
   };
 
   try {
+    const existingAgents = await listAgents(restaurantId);
+    const reusableAgent = existingAgents.find((row) => row.name === parsed.data.name);
+    if (reusableAgent?.omnidim_agent_id) {
+      const integrations = await listAgentIntegrations(restaurantId, reusableAgent.omnidim_agent_id);
+      if (integrations.length < CHERRY_VOICE_TOOLS.length) {
+        console.info(
+          `[onboarding/agent] Reusing existing agent ${reusableAgent.omnidim_agent_id} for restaurant ${restaurantId}`,
+        );
+        const provisioning = await provisionAgentWithIntegrations(
+          restaurantId,
+          reusableAgent.omnidim_agent_id,
+        );
+        return ok(
+          {
+            agent: reusableAgent.config ?? { id: reusableAgent.omnidim_agent_id },
+            localId: reusableAgent.id,
+            provisioning,
+            reused: true,
+          },
+          { status: 200 },
+        );
+      }
+    }
+
     const created = (await omnidim.agents.create(payload as never)) as Record<string, unknown>;
     const omnidimAgentId =
       (created?.id as string | number | undefined) ??
@@ -73,6 +98,10 @@ export async function POST(req: Request) {
 
     return ok({ agent: created, localId, provisioning }, { status: 201 });
   } catch (err) {
-    return fail(`Failed to create onboarding agent: ${(err as Error).message}`, 502);
+    console.error("[onboarding/agent] Failed to create agent:", err);
+    return fail(
+      `Failed to create agent: ${sanitizePlatformError((err as Error).message)}`,
+      502,
+    );
   }
 }

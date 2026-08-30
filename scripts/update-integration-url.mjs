@@ -31,6 +31,177 @@ function buildUrl(base, path) {
   return `${base.replace(/\/$/, "")}${path}`;
 }
 
+function normalizeUrl(url) {
+  return (url ?? "").replace(/\/$/, "");
+}
+
+function isUnreachableFromCloud(baseUrl) {
+  try {
+    const { hostname } = new URL(baseUrl);
+    const host = hostname.toLowerCase();
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".local")) {
+      return true;
+    }
+    if (/^10\./.test(host)) return true;
+    if (/^192\.168\./.test(host)) return true;
+    const m = host.match(/^172\.(\d+)\./);
+    if (m && Number(m[1]) >= 16 && Number(m[1]) <= 31) return true;
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+function integrationUrlMatchesTool(url, toolPath, expectedUrl) {
+  if (!url) return false;
+  if (normalizeUrl(url) === normalizeUrl(expectedUrl)) return true;
+  try {
+    const path = new URL(url).pathname;
+    return path === toolPath || path.endsWith(toolPath);
+  } catch {
+    return url.endsWith(toolPath);
+  }
+}
+
+function isDuplicateIntegrationSignal(err, body) {
+  const parts = [];
+  if (err?.message) parts.push(err.message);
+  if (body) {
+    for (const key of ["error", "message", "error_description", "detail"]) {
+      if (typeof body[key] === "string") parts.push(body[key]);
+    }
+  }
+  const msg = parts.join(" ").toLowerCase();
+  return (
+    msg.includes("already exists") ||
+    msg.includes("duplicate") ||
+    msg.includes("name must be unique") ||
+    msg.includes("integration with this name")
+  );
+}
+
+function buildIntegrationNameCandidates(toolName, restaurantId, baseUrl) {
+  const candidates = [toolName, `${toolName}_${restaurantId}`];
+  if (!isUnreachableFromCloud(baseUrl)) candidates.push(`${toolName}_prod`);
+  return [...new Set(candidates)];
+}
+
+function extractIntegrationId(res) {
+  return res?.integration?.id ?? res?.integration_id ?? res?.id ?? null;
+}
+
+async function fetchOrgIntegrations(omnidim) {
+  const res = await omnidim.integrations.list();
+  return res.integrations ?? [];
+}
+
+function findReusableOrgIntegration(orgIntegrations, tool, expectedUrl, nameCandidates) {
+  const normalizedExpected = normalizeUrl(expectedUrl);
+
+  for (const integration of orgIntegrations) {
+    if (normalizeUrl(integration.url) === normalizedExpected) return integration;
+  }
+
+  for (const name of nameCandidates) {
+    const hit = orgIntegrations.find((row) => row.name === name);
+    if (hit && normalizeUrl(hit.url) === normalizedExpected) return hit;
+  }
+
+  for (const integration of orgIntegrations) {
+    if (
+      nameCandidates.includes(integration.name) &&
+      integrationUrlMatchesTool(integration.url, tool.path, expectedUrl) &&
+      normalizeUrl(integration.url) === normalizedExpected
+    ) {
+      return integration;
+    }
+  }
+
+  return undefined;
+}
+
+async function tryCreateCustomApi(omnidim, payload) {
+  try {
+    const created = await omnidim.integrations.createCustomApi(payload);
+    const integrationId = extractIntegrationId(created);
+    if (integrationId != null) return integrationId;
+    if (isDuplicateIntegrationSignal(null, created)) {
+      console.warn(`  ! createCustomApi for "${payload.name}" returned no id (likely duplicate)`);
+      return null;
+    }
+    console.warn(`  ! createCustomApi for "${payload.name}" returned no integration id`);
+    return null;
+  } catch (err) {
+    if (isDuplicateIntegrationSignal(err)) {
+      console.warn(`  ! Integration "${payload.name}" already exists at org level`);
+      return null;
+    }
+    throw err;
+  }
+}
+
+async function resolveIntegrationId(omnidim, tool, baseUrl, apiKey, restaurantId) {
+  const expectedUrl = buildUrl(baseUrl, tool.path);
+  const nameCandidates = buildIntegrationNameCandidates(tool.name, restaurantId, baseUrl);
+
+  for (const name of nameCandidates) {
+    const integrationId = await tryCreateCustomApi(omnidim, {
+      name,
+      url: expectedUrl,
+      method: tool.method,
+      description: tool.name,
+      headers: [
+        { key: "Authorization", value: `Bearer ${apiKey}` },
+        { key: "X-Restaurant-Key", value: apiKey },
+      ],
+      request_timeout: 30,
+    });
+    if (integrationId != null) {
+      if (name !== tool.name) {
+        console.log(`  + created ${tool.name} as "${name}" (id ${integrationId})`);
+      }
+      return integrationId;
+    }
+
+    const orgIntegrations = await fetchOrgIntegrations(omnidim);
+    const reusable = findReusableOrgIntegration(orgIntegrations, tool, expectedUrl, [name, ...nameCandidates]);
+    if (reusable) {
+      console.log(`  ~ reusing integration ${reusable.id} ("${reusable.name}") for ${tool.name}`);
+      return reusable.id;
+    }
+  }
+
+  const orgIntegrations = await fetchOrgIntegrations(omnidim);
+  const byUrl = orgIntegrations.find((row) => normalizeUrl(row.url) === normalizeUrl(expectedUrl));
+  if (byUrl) {
+    console.log(`  ~ reusing integration ${byUrl.id} by URL for ${tool.name}`);
+    return byUrl.id;
+  }
+
+  throw new Error(`No integration id returned for ${tool.name}`);
+}
+
+async function attachIntegrationToAgent(omnidim, agentId, integrationId) {
+  try {
+    await omnidim.integrations.addToAgent(agentId, integrationId);
+  } catch (err) {
+    const live = await omnidim.integrations.listForAgent(agentId);
+    const alreadyAttached = (live.integrations ?? []).some((row) => row.id === integrationId);
+    if (!alreadyAttached) throw err;
+  }
+}
+
+function findAttachedIntegrationWithUrl(liveIntegrations, expectedUrl, toolPath) {
+  const normalizedExpected = normalizeUrl(expectedUrl);
+  for (const row of liveIntegrations) {
+    if (normalizeUrl(row.url) === normalizedExpected) return row.id;
+    if (integrationUrlMatchesTool(row.url, toolPath, expectedUrl)) {
+      if (normalizeUrl(row.url) === normalizedExpected) return row.id;
+    }
+  }
+  return null;
+}
+
 async function getDb() {
   return mysql.createConnection({
     host: process.env.DB_HOST,
@@ -120,7 +291,7 @@ async function main() {
       if (!apiKey) throw new Error(`No integration API key for agent ${agentId}`);
 
       const live = await omnidim.integrations.listForAgent(agentId);
-      const liveByName = new Map((live.integrations ?? []).map((i) => [i.name, i]));
+      const liveIntegrations = live.integrations ?? [];
 
       const [dbRows] = await conn.query(
         "SELECT tool_name, omnidim_integration_id FROM omnidim_agent_integrations WHERE restaurant_id = ? AND omnidim_agent_id = ?",
@@ -130,11 +301,19 @@ async function main() {
 
       for (const tool of CHERRY_VOICE_TOOLS) {
         const expectedUrl = buildUrl(baseUrl, tool.path);
-        const current = liveByName.get(tool.name);
+        const attachedId = findAttachedIntegrationWithUrl(liveIntegrations, expectedUrl, tool.path);
         const knownId = dbByTool.get(tool.name);
 
-        if (current?.url === expectedUrl) {
-          console.log(`  ✓ ${tool.name} already at ${expectedUrl}`);
+        if (attachedId != null) {
+          console.log(`  ✓ ${tool.name} already attached at ${expectedUrl}`);
+          if (knownId !== attachedId) {
+            await conn.query(
+              `INSERT INTO omnidim_agent_integrations (restaurant_id, omnidim_agent_id, omnidim_integration_id, tool_name)
+               VALUES (?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE omnidim_integration_id = VALUES(omnidim_integration_id)`,
+              [rid, agentId, attachedId, tool.name],
+            );
+          }
           continue;
         }
 
@@ -147,22 +326,8 @@ async function main() {
           }
         }
 
-        const created = await omnidim.integrations.createCustomApi({
-          name: tool.name,
-          url: expectedUrl,
-          method: tool.method,
-          description: tool.name,
-          headers: [
-            { key: "Authorization", value: `Bearer ${apiKey}` },
-            { key: "X-Restaurant-Key", value: apiKey },
-          ],
-          request_timeout: 30,
-        });
-        const newId =
-          created?.integration?.id ?? created?.integration_id ?? created?.id ?? null;
-        if (!newId) throw new Error(`No integration id returned for ${tool.name}`);
-
-        await omnidim.integrations.addToAgent(agentId, newId);
+        const newId = await resolveIntegrationId(omnidim, tool, baseUrl, apiKey, rid);
+        await attachIntegrationToAgent(omnidim, agentId, newId);
         await conn.query(
           `INSERT INTO omnidim_agent_integrations (restaurant_id, omnidim_agent_id, omnidim_integration_id, tool_name)
            VALUES (?, ?, ?, ?)
