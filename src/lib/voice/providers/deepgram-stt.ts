@@ -60,6 +60,10 @@ export function createDeepgramSttProvider(options?: {
           transcriptHandler?.({ text: "", isFinal: false, speechStarted: true });
           return;
         }
+        if (data.type === "UtteranceEnd") {
+          transcriptHandler?.({ text: "", isFinal: false, utteranceEnd: true });
+          return;
+        }
         if (data.type !== "Results") return;
 
         const alt = data.channel?.alternatives?.[0];

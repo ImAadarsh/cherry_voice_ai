@@ -20,6 +20,7 @@ export type TurnMetricEntry = {
   timestamp: string;
   zero_audio_chunks?: boolean;
   barge_in?: boolean;
+  stale_utterance_discarded?: boolean;
   stt_confidence?: number | null;
   user_text?: string;
   agent_text?: string;

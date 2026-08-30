@@ -4,6 +4,8 @@ import { createGeminiLlmProvider } from "./providers/gemini-llm";
 import { createInworldTtsProvider } from "./providers/inworld-tts";
 import type { LlmMessage, LlmTurnResult } from "./providers/types";
 import {
+  cancelInFlightLlm,
+  cancelInFlightTurn,
   emitSessionEvent,
   enableTextOnlyMode,
   getVoiceSession,
@@ -57,10 +59,13 @@ const TTS_FLASH_MODEL = "inworld-tts-2-flash";
 const LOW_STT_CONFIDENCE = 0.55;
 const TTS_RETRY_MAX_CHARS = 240;
 /** Ignore barge-in briefly after TTS starts (echo from speakers). */
-const BARGE_IN_GRACE_MS = 700;
-/** Partial transcripts need high confidence before interrupting agent speech. */
-const BARGE_IN_MIN_CONFIDENCE = 0.78;
-const BARGE_IN_MIN_PARTIAL_CHARS = 5;
+const BARGE_IN_GRACE_MS = 200;
+/** Partial transcripts need moderate confidence before interrupting agent speech. */
+const BARGE_IN_MIN_CONFIDENCE = 0.5;
+const BARGE_IN_MIN_PARTIAL_CHARS = 3;
+const UTTERANCE_DEBOUNCE_MS = 400;
+const UTTERANCE_MAX_WAIT_MS = 1500;
+const MIN_UTTERANCE_CHARS = 3;
 
 type SpeakOptions = {
   skipTranscriptLog?: boolean;
@@ -74,6 +79,10 @@ function truncateForTtsRetry(text: string): string {
   const slice = trimmed.slice(0, TTS_RETRY_MAX_CHARS);
   const lastSpace = slice.lastIndexOf(" ");
   return (lastSpace > 80 ? slice.slice(0, lastSpace) : slice).trim();
+}
+
+function isUtteranceStale(session: VoiceSessionRecord, utteranceId: number): boolean {
+  return utteranceId !== session.latestUtteranceId;
 }
 
 function shouldAllowBargeIn(
@@ -97,6 +106,14 @@ function shouldAllowBargeIn(
   return true;
 }
 
+function maybeBargeInOnSpeechStart(session: VoiceSessionRecord): void {
+  if (!session.isSpeaking) return;
+  const elapsed = Date.now() - (session.speakingStartedAt ?? 0);
+  if (elapsed < BARGE_IN_GRACE_MS) return;
+  recordBargeIn(session);
+  interruptSpeech(session);
+}
+
 function maybeBargeIn(
   session: VoiceSessionRecord,
   text: string,
@@ -106,6 +123,13 @@ function maybeBargeIn(
   if (!shouldAllowBargeIn(session, text, isFinal, confidence)) return;
   recordBargeIn(session);
   interruptSpeech(session);
+}
+
+function supersedeInFlightUtterance(session: VoiceSessionRecord): number {
+  session.utteranceSeq += 1;
+  session.latestUtteranceId = session.utteranceSeq;
+  cancelInFlightTurn(session);
+  return session.latestUtteranceId;
 }
 
 function sessionMessagesToLlm(
@@ -162,7 +186,10 @@ async function streamLlmToSpeech(
   session: VoiceSessionRecord,
   userText: string,
   timing: TurnTiming,
+  utteranceId: number,
 ): Promise<string> {
+  if (isUtteranceStale(session, utteranceId)) return "";
+
   const systemPrompt = await buildVoiceSystemPrompt(session, userText);
   const baseCount = session.messages.length;
   const messages: LlmMessage[] = [
@@ -170,23 +197,30 @@ async function streamLlmToSpeech(
     { role: "user", content: userText },
   ];
 
+  session.llmAbort = new AbortController();
+  const llmSignal = session.llmAbort.signal;
+
   timing.llmStartAt = Date.now();
   let buffer = "";
   let agentText = "";
-  const stream = llm.chatStream(messages, { systemPrompt });
+  const stream = llm.chatStream(messages, { systemPrompt, signal: llmSignal });
   let result = await stream.next();
 
   while (!result.done) {
+    if (isUtteranceStale(session, utteranceId) || llmSignal.aborted) return agentText;
     buffer += String(result.value);
     const { sentences, remainder } = extractCompleteSentences(buffer);
     buffer = remainder;
     for (const sentence of sentences) {
+      if (isUtteranceStale(session, utteranceId)) return agentText;
       timing.llmEndAt = Date.now();
       agentText += (agentText ? " " : "") + sentence;
       await speakResponse(session, sentence, { timing, skipTranscriptLog: true });
     }
     result = await stream.next();
   }
+
+  if (isUtteranceStale(session, utteranceId)) return agentText;
 
   const turn = result.value;
   timing.llmEndAt = timing.llmEndAt || Date.now();
@@ -202,7 +236,9 @@ async function streamLlmToSpeech(
       session.restaurantId,
       turn.toolCalls.map((c) => c.name),
     );
-    await speakResponse(session, filler, { skipTranscriptLog: true, modelId: TTS_FLASH_MODEL, timing });
+    if (!isUtteranceStale(session, utteranceId)) {
+      await speakResponse(session, filler, { skipTranscriptLog: true, modelId: TTS_FLASH_MODEL, timing });
+    }
 
     timing.toolStartAt = Date.now();
     emitSessionEvent(session, {
@@ -215,19 +251,25 @@ async function streamLlmToSpeech(
     let reply = turn.text;
 
     while (currentTurn.toolCalls.length > 0 && guard < 6) {
+      if (isUtteranceStale(session, utteranceId) || llmSignal.aborted) return agentText;
       guard += 1;
       const toolResults = await executeToolCalls(session, currentTurn.toolCalls);
       timing.toolEndAt = Date.now();
 
       messages.push({ role: "model", content: currentTurn.text, toolCalls: currentTurn.toolCalls });
-      const followUp = await llm.continueWithToolResults(messages, toolResults, { systemPrompt });
+      const followUp = await llm.continueWithToolResults(messages, toolResults, {
+        systemPrompt,
+        signal: llmSignal,
+      });
       messages.push({ role: "user", toolResults });
       reply = followUp.text || reply;
       currentTurn = followUp;
     }
 
-    await speakResponse(session, reply.trim(), { timing });
-    appendTurnToSession(session, baseCount, messages, userText, reply);
+    if (!isUtteranceStale(session, utteranceId)) {
+      await speakResponse(session, reply.trim(), { timing });
+      appendTurnToSession(session, baseCount, messages, userText, reply);
+    }
     return reply;
   }
 
@@ -249,7 +291,9 @@ async function streamLlmToSpeech(
   }
 
   const reply = finalText || "Sorry, I couldn't complete that. Could you repeat?";
-  appendTurnToSession(session, baseCount, messages, userText, reply);
+  if (!isUtteranceStale(session, utteranceId)) {
+    appendTurnToSession(session, baseCount, messages, userText, reply);
+  }
   return reply;
 }
 
@@ -431,10 +475,16 @@ async function speakResponseNow(
 async function processUtterance(
   session: VoiceSessionRecord,
   utterance: string,
+  utteranceId: number,
   sttConfidence?: number | null,
 ): Promise<void> {
   const text = utterance.trim();
-  if (!text || session.processing) return;
+  if (!text || text.length < MIN_UTTERANCE_CHARS) return;
+  if (isUtteranceStale(session, utteranceId)) return;
+  if (session.processing) {
+    session.pendingUtterance = text;
+    return;
+  }
 
   session.processing = true;
   session.pendingUtterance = "";
@@ -458,32 +508,55 @@ async function processUtterance(
 
   let reply = "";
   let zeroAudio = false;
+  let stale = false;
   try {
-    reply = await streamLlmToSpeech(session, text, timing);
+    reply = await streamLlmToSpeech(session, text, timing, utteranceId);
+    stale = isUtteranceStale(session, utteranceId);
     zeroAudio =
+      !stale &&
       timing.firstAudioAt == null &&
       !timing.audioFallbackEmitted &&
       !session.textOnlyMode;
   } catch (err) {
-    session.failed = true;
-    emitSessionEvent(session, {
-      type: "error",
-      payload: { message: sanitizeVoiceError((err as Error).message) },
-    });
-    setSessionState(session, "listening");
+    stale = isUtteranceStale(session, utteranceId) || (err as Error).name === "AbortError";
+    if (!stale) {
+      session.failed = true;
+      emitSessionEvent(session, {
+        type: "error",
+        payload: { message: sanitizeVoiceError((err as Error).message) },
+      });
+      setSessionState(session, "listening");
+    }
   } finally {
+    session.llmAbort = null;
+    const staleNow = stale || isUtteranceStale(session, utteranceId);
     const metric = finalizeTurnMetric(timing, {
       zeroAudio,
       conf: sttConfidence ?? null,
       user: text,
-      agent: reply,
+      agent: staleNow ? "" : reply,
       bargeIn: session.turnBargeIn,
+      staleUtteranceDiscarded: staleNow,
     });
     await logCherryVoiceTurnMetric(session, metric);
     session.processing = false;
+    if (staleNow) {
+      const pending = session.pendingUtterance.trim();
+      if (pending && pending.length >= MIN_UTTERANCE_CHARS) {
+        session.utteranceSeq += 1;
+        session.latestUtteranceId = session.utteranceSeq;
+        session.pendingUtterance = "";
+        void processUtterance(session, pending, session.latestUtteranceId, session.sttConfidence);
+      }
+      return;
+    }
     const queued = session.pendingUtterance.trim();
     session.pendingUtterance = "";
-    if (queued) void processUtterance(session, queued, session.sttConfidence);
+    if (queued && queued.length >= MIN_UTTERANCE_CHARS) {
+      session.utteranceSeq += 1;
+      session.latestUtteranceId = session.utteranceSeq;
+      void processUtterance(session, queued, session.latestUtteranceId, session.sttConfidence);
+    }
   }
 }
 
@@ -540,20 +613,61 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
   sttBySession.set(sessionId, stt);
 
   let utteranceTimer: ReturnType<typeof setTimeout> | null = null;
+  let utteranceDeadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  let utteranceBurstStartedAt = 0;
   let lastConfidence: number | null = null;
 
+  const clearUtteranceTimers = () => {
+    if (utteranceTimer) {
+      clearTimeout(utteranceTimer);
+      utteranceTimer = null;
+    }
+    if (utteranceDeadlineTimer) {
+      clearTimeout(utteranceDeadlineTimer);
+      utteranceDeadlineTimer = null;
+    }
+    utteranceBurstStartedAt = 0;
+  };
+
+  const flushUtterance = () => {
+    clearUtteranceTimers();
+    const text = session.pendingUtterance.trim();
+    if (!text || text.length < MIN_UTTERANCE_CHARS) return;
+
+    const utteranceId = supersedeInFlightUtterance(session);
+    session.pendingUtterance = "";
+    void processUtterance(session, text, utteranceId, lastConfidence);
+  };
+
   const scheduleUtterance = () => {
+    const now = Date.now();
+    if (!utteranceBurstStartedAt) utteranceBurstStartedAt = now;
+
+    if (!utteranceDeadlineTimer) {
+      utteranceDeadlineTimer = setTimeout(flushUtterance, UTTERANCE_MAX_WAIT_MS);
+    }
+
     if (utteranceTimer) clearTimeout(utteranceTimer);
-    utteranceTimer = setTimeout(() => {
-      const text = session.pendingUtterance.trim();
-      if (text && !session.processing) void processUtterance(session, text, lastConfidence);
-    }, 800);
+    const elapsed = now - utteranceBurstStartedAt;
+    const delay =
+      elapsed >= UTTERANCE_MAX_WAIT_MS ? 0 : Math.min(UTTERANCE_DEBOUNCE_MS, UTTERANCE_MAX_WAIT_MS - elapsed);
+    utteranceTimer = setTimeout(flushUtterance, delay);
   };
 
   stt.onTranscript((event) => {
-    if (event.speechStarted && session.isSpeaking && event.text?.trim()) {
-      maybeBargeIn(session, event.text, false, event.confidence);
+    if (event.speechStarted) {
+      if (session.isSpeaking) {
+        maybeBargeInOnSpeechStart(session);
+      } else if (session.processing) {
+        supersedeInFlightUtterance(session);
+      }
     }
+
+    if (event.utteranceEnd) {
+      flushUtterance();
+      return;
+    }
+
     if (event.confidence != null) lastConfidence = event.confidence;
 
     if (!event.text) return;
@@ -565,6 +679,11 @@ export async function startVoiceOrchestrator(sessionId: string): Promise<void> {
 
     if (event.isFinal) {
       session.pendingUtterance = `${session.pendingUtterance} ${event.text}`.trim();
+      if (session.isSpeaking) {
+        maybeBargeIn(session, event.text, true, event.confidence);
+      } else if (session.processing) {
+        supersedeInFlightUtterance(session);
+      }
       scheduleUtterance();
     } else if (session.isSpeaking) {
       maybeBargeIn(session, event.text, false, event.confidence);
@@ -639,7 +758,11 @@ export async function stopVoiceOrchestrator(sessionId: string): Promise<void> {
 
 export function interruptSession(sessionId: string): void {
   const session = getVoiceSession(sessionId);
-  if (session) interruptSpeech(session);
+  if (session) {
+    recordBargeIn(session);
+    cancelInFlightLlm(session);
+    interruptSpeech(session);
+  }
 }
 
 // Ensure flash model constant is referenced for tree-shaking of config

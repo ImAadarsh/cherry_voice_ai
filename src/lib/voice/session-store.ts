@@ -51,6 +51,9 @@ export interface VoiceSessionRecord {
   ttsFailureCount: number;
   bargeInCount: number;
   turnBargeIn: boolean;
+  utteranceSeq: number;
+  latestUtteranceId: number;
+  llmAbort: AbortController | null;
   speakingStartedAt: number | null;
   speakGeneration: number;
   speakQueue: Promise<void>;
@@ -128,6 +131,9 @@ export function createVoiceSession(input: {
     ttsFailureCount: 0,
     bargeInCount: 0,
     turnBargeIn: false,
+    utteranceSeq: 0,
+    latestUtteranceId: 0,
+    llmAbort: null,
     speakingStartedAt: null,
     speakGeneration: 0,
     speakQueue: Promise.resolve(),
@@ -199,6 +205,7 @@ export function setMenuCache(session: VoiceSessionRecord, body: unknown): void {
 export function deleteVoiceSession(sessionId: string): void {
   const session = sessions.get(sessionId);
   if (session?.ttsAbort) session.ttsAbort.abort();
+  if (session?.llmAbort) session.llmAbort.abort();
   if (session?.durationTimer) clearInterval(session.durationTimer);
   sessions.delete(sessionId);
 }
@@ -274,6 +281,20 @@ export function cancelPendingTts(session: VoiceSessionRecord): void {
     session.ttsAbort.abort();
     session.ttsAbort = null;
   }
+}
+
+/** Abort in-flight LLM generation for a superseded utterance. */
+export function cancelInFlightLlm(session: VoiceSessionRecord): void {
+  if (session.llmAbort) {
+    session.llmAbort.abort();
+    session.llmAbort = null;
+  }
+}
+
+/** Cancel LLM + TTS for a superseded turn (user spoke again). */
+export function cancelInFlightTurn(session: VoiceSessionRecord): void {
+  cancelInFlightLlm(session);
+  interruptSpeech(session);
 }
 
 /** User barge-in: abort TTS, drop queued speech, and tell the client to stop playback. */

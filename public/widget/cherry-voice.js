@@ -39,6 +39,10 @@
   };
 
   var MAX_RECONNECT_ATTEMPTS = 5;
+  var VAD_ENERGY_THRESHOLD = 0.018;
+  var VAD_FRAMES_REQUIRED = 3;
+  var vadFrames = 0;
+  var vadCooldownUntil = 0;
 
   function injectStyles() {
     if (document.getElementById("cherry-voice-styles")) return;
@@ -196,11 +200,34 @@
 
   function sendInterrupt() {
     if (!state.session || !state.session.control_url) return;
+    stopPlayback();
     fetch(state.session.control_url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "interrupt" }),
     }).catch(function () {});
+  }
+
+  function detectUserSpeech(samples) {
+    if (state.uiState !== "speaking") {
+      vadFrames = 0;
+      return;
+    }
+    var now = Date.now();
+    if (now < vadCooldownUntil) return;
+    var sum = 0;
+    for (var i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+    var rms = Math.sqrt(sum / samples.length);
+    if (rms >= VAD_ENERGY_THRESHOLD) {
+      vadFrames += 1;
+      if (vadFrames >= VAD_FRAMES_REQUIRED) {
+        vadFrames = 0;
+        vadCooldownUntil = now + 600;
+        sendInterrupt();
+      }
+    } else {
+      vadFrames = 0;
+    }
   }
 
   function playPcmChunk(base64, sampleRate) {
@@ -460,6 +487,7 @@
         state.workletNode.port.onmessage = function (ev) {
           if (!state.active || !session.audio_url) return;
           if (!ev.data || ev.data.type !== "pcm" || !ev.data.samples) return;
+          detectUserSpeech(ev.data.samples);
           var down = downsample(ev.data.samples, state.audioContext.sampleRate, 16000);
           var pcm = floatTo16BitPCM(down);
           fetch(session.audio_url, {
@@ -521,7 +549,7 @@
         state.audioFailCount = 0;
         state.textOnlyMode = false;
         state.earconEnabled = Boolean(json.data.processing_earcon_enabled);
-        showBanner("");
+        showBanner("Tip: headphones give the clearest audio — you can interrupt anytime by speaking.");
         transcriptEl.classList.remove("text-only-prominent");
         fab.classList.add("active");
         endBtn.disabled = false;

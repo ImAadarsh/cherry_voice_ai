@@ -58,6 +58,7 @@ export function CherryVoiceWebCallPanel({
   const [assistantText, setAssistantText] = useState("");
   const [textOnlyMode, setTextOnlyMode] = useState(false);
   const [networkWarning, setNetworkWarning] = useState<string | null>(null);
+  const [headphonesTip, setHeadphonesTip] = useState(false);
 
   const sessionRef = useRef<CherryVoiceSession | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -67,10 +68,22 @@ export function CherryVoiceWebCallPanel({
   const closingRef = useRef(false);
   const audioFailCountRef = useRef(0);
   const earconEnabledRef = useRef(false);
+  const statusRef = useRef<CallStatus>("idle");
 
   const stopPlayback = useCallback(() => {
     playbackRef.current?.stop();
   }, []);
+
+  const sendInterrupt = useCallback(() => {
+    const session = sessionRef.current;
+    if (!session?.control_url) return;
+    stopPlayback();
+    void fetch(session.control_url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "interrupt" }),
+    }).catch(() => {});
+  }, [stopPlayback]);
 
   const stopAudioPipeline = useCallback(() => {
     micHandleRef.current?.stop();
@@ -102,6 +115,7 @@ export function CherryVoiceWebCallPanel({
 
     stopAudioPipeline();
     sessionRef.current = null;
+    statusRef.current = "ended";
     setStatus("ended");
     onEnded?.();
   }, [onEnded, stopAudioPipeline]);
@@ -141,7 +155,10 @@ export function CherryVoiceWebCallPanel({
             return;
           }
           const mapped = mapServerState(data.state);
-          if (mapped) setStatus(mapped);
+          if (mapped) {
+            statusRef.current = mapped;
+            setStatus(mapped);
+          }
         } catch {
           /* ignore */
         }
@@ -277,6 +294,8 @@ export function CherryVoiceWebCallPanel({
       audioUrl: session.audio_url,
       workletUrl: WORKLET_URL,
       isActive: () => activeRef.current,
+      shouldDetectUserSpeech: () => statusRef.current === "speaking",
+      onUserSpeechDetected: () => sendInterrupt(),
       onUploadFailure: () => {
         audioFailCountRef.current += 1;
         if (audioFailCountRef.current >= NETWORK_FAIL_THRESHOLD) {
@@ -287,7 +306,7 @@ export function CherryVoiceWebCallPanel({
       },
     });
     micHandleRef.current = handle;
-  }, []);
+  }, [sendInterrupt]);
 
   const startCall = useCallback(async () => {
     if (busy || activeRef.current) return;
@@ -297,7 +316,9 @@ export function CherryVoiceWebCallPanel({
     setAssistantText("");
     setTextOnlyMode(false);
     setNetworkWarning(null);
+    setHeadphonesTip(true);
     setStatus("connecting");
+    statusRef.current = "connecting";
     closingRef.current = false;
 
     try {
@@ -310,6 +331,7 @@ export function CherryVoiceWebCallPanel({
       activeRef.current = true;
       connectEvents(data);
       await startMic(data);
+      statusRef.current = "listening";
       setStatus("listening");
       toast.success("Web call connected");
     } catch (e) {
@@ -321,6 +343,7 @@ export function CherryVoiceWebCallPanel({
       }
       stopAudioPipeline();
       sessionRef.current = null;
+      statusRef.current = "idle";
       setStatus("idle");
       const message = sanitizeVoiceError((e as Error).message);
       setVoiceNotice(message);
@@ -402,6 +425,12 @@ export function CherryVoiceWebCallPanel({
         <div className="flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{voiceNotice}</span>
+        </div>
+      )}
+
+      {headphonesTip && isLive && (
+        <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-3 text-sm text-blue-900 dark:text-blue-100">
+          For the best experience, use headphones — you can still interrupt the agent anytime by speaking.
         </div>
       )}
 

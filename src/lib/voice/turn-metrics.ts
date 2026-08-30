@@ -32,6 +32,7 @@ export function finalizeTurnMetric(
   extra?: {
     zeroAudio?: boolean;
     bargeIn?: boolean;
+    staleUtteranceDiscarded?: boolean;
     conf?: number | null;
     user?: string;
     agent?: string;
@@ -49,6 +50,7 @@ export function finalizeTurnMetric(
     timestamp: new Date().toISOString(),
     ...(extra?.zeroAudio ? { zero_audio_chunks: true } : {}),
     ...(extra?.bargeIn ? { barge_in: true } : {}),
+    ...(extra?.staleUtteranceDiscarded ? { stale_utterance_discarded: true } : {}),
     ...(extra?.conf != null ? { stt_confidence: extra.conf } : {}),
     ...(extra?.user ? { user_text: extra.user } : {}),
     ...(extra?.agent ? { agent_text: extra.agent } : {}),

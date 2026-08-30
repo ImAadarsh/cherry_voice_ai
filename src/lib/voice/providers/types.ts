@@ -10,6 +10,7 @@ export interface SttTranscriptEvent {
   text: string;
   isFinal: boolean;
   speechStarted?: boolean;
+  utteranceEnd?: boolean;
   confidence?: number | null;
 }
 

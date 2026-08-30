@@ -1,11 +1,18 @@
 /** Shared AudioWorklet mic capture for Cherry Voice web clients. */
 export type MicCaptureHandle = { stop: () => void };
 
+const VAD_ENERGY_THRESHOLD = 0.018;
+const VAD_FRAMES_REQUIRED = 3;
+
 export async function startWorkletMicCapture(opts: {
   audioUrl: string;
   workletUrl: string;
   isActive: () => boolean;
   onUploadFailure?: () => void;
+  /** Fires when sustained mic energy is detected (client-side VAD for barge-in). */
+  onUserSpeechDetected?: () => void;
+  /** When false, VAD callbacks are suppressed (e.g. agent not speaking). */
+  shouldDetectUserSpeech?: () => boolean;
 }): Promise<{ handle: MicCaptureHandle }> {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -21,9 +28,35 @@ export async function startWorkletMicCapture(opts: {
   await ctx.audioWorklet.addModule(opts.workletUrl);
   const src = ctx.createMediaStreamSource(stream);
   const node = new AudioWorkletNode(ctx, "pcm-capture-processor");
+  let vadFrames = 0;
+  let vadCooldownUntil = 0;
+
   node.port.onmessage = (ev: MessageEvent<{ type?: string; samples?: Float32Array }>) => {
     if (!opts.isActive() || ev.data?.type !== "pcm" || !ev.data.samples) return;
-    const down = downsample(ev.data.samples, ctx.sampleRate, 16000);
+    const samples = ev.data.samples;
+
+    if (opts.onUserSpeechDetected && opts.shouldDetectUserSpeech?.()) {
+      const now = Date.now();
+      if (now >= vadCooldownUntil) {
+        let sum = 0;
+        for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+        const rms = Math.sqrt(sum / samples.length);
+        if (rms >= VAD_ENERGY_THRESHOLD) {
+          vadFrames += 1;
+          if (vadFrames >= VAD_FRAMES_REQUIRED) {
+            vadFrames = 0;
+            vadCooldownUntil = now + 600;
+            opts.onUserSpeechDetected();
+          }
+        } else {
+          vadFrames = 0;
+        }
+      }
+    } else {
+      vadFrames = 0;
+    }
+
+    const down = downsample(samples, ctx.sampleRate, 16000);
     const pcm = f32ToPcm(down);
     void fetch(opts.audioUrl, { method: "POST", headers: { "Content-Type": "application/octet-stream" }, body: pcm })
       .catch(() => opts.onUploadFailure?.());
