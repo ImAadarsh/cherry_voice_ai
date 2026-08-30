@@ -181,7 +181,7 @@ export function generatePromptFromFlow(
   });
 
   lines.push(
-    "Stay concise, friendly, and confirm details before taking actions. Use the restaurant menu and policies when answering questions.",
+    "Stay concise: 1–2 short sentences per reply. Ask one question at a time — never duplicate questions. Do not read the full menu aloud. Confirm details before taking actions.",
   );
   return lines.join("\n");
 }

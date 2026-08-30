@@ -14,12 +14,74 @@ import mysql from "mysql2/promise";
 import OmniDimension from "@omnidim-ai/sdk";
 
 const CHERRY_VOICE_TOOLS = [
-  { name: "create_order", method: "POST", path: "/api/integrations/omnidim/create-order" },
-  { name: "get_menu", method: "GET", path: "/api/integrations/omnidim/menu" },
-  { name: "lookup_customer", method: "GET", path: "/api/integrations/omnidim/customer" },
-  { name: "send_payment_link", method: "POST", path: "/api/integrations/omnidim/send-payment-link" },
-  { name: "create_reservation", method: "POST", path: "/api/integrations/omnidim/create-reservation" },
-  { name: "get_restaurant_info", method: "GET", path: "/api/integrations/omnidim/restaurant" },
+  {
+    name: "create_order",
+    method: "POST",
+    path: "/api/integrations/omnidim/create-order",
+    description:
+      "Place a new order after collecting customer phone, name, pickup/delivery, and all items with quantities.",
+    body_params: [
+      {
+        key: "phone",
+        description: "Customer phone number with country code (required before calling)",
+        type: "string",
+        required: true,
+      },
+      {
+        key: "name",
+        description: "Customer full name",
+        type: "string",
+        required: true,
+      },
+      {
+        key: "order_type",
+        description: "pickup or delivery",
+        type: "string",
+        required: true,
+      },
+      {
+        key: "items",
+        description:
+          'JSON array of order line items, e.g. [{"name":"Pepperoni Pizza","quantity":1}]',
+        type: "string",
+        required: true,
+      },
+      { key: "notes", description: "Special instructions or allergies", type: "string" },
+    ],
+  },
+  { name: "get_menu", method: "GET", path: "/api/integrations/omnidim/menu", description: "Read menu." },
+  {
+    name: "lookup_customer",
+    method: "GET",
+    path: "/api/integrations/omnidim/customer",
+    description: "Look up customer by phone.",
+    query_params: [{ key: "phone", description: "Phone", type: "string", required: true }],
+  },
+  {
+    name: "send_payment_link",
+    method: "POST",
+    path: "/api/integrations/omnidim/send-payment-link",
+    description: "Send payment link.",
+    body_params: [{ key: "order_id", description: "Order id", type: "number", required: true }],
+  },
+  {
+    name: "create_reservation",
+    method: "POST",
+    path: "/api/integrations/omnidim/create-reservation",
+    description: "Book a table.",
+    body_params: [
+      { key: "customer_name", description: "Name", type: "string", required: true },
+      { key: "customer_phone", description: "Phone", type: "string", required: true },
+      { key: "party_size", description: "Guests", type: "number", required: true },
+      { key: "reserved_at", description: "ISO datetime", type: "string", required: true },
+    ],
+  },
+  {
+    name: "get_restaurant_info",
+    method: "GET",
+    path: "/api/integrations/omnidim/restaurant",
+    description: "Get hours and policies.",
+  },
 ];
 
 function parseArg(name) {
@@ -52,6 +114,25 @@ function isUnreachableFromCloud(baseUrl) {
   }
 }
 
+function paramsMatchExpected(actual, expected) {
+  if (!expected?.length) return true;
+  const actualParams = actual ?? [];
+  for (const param of expected) {
+    const hit = actualParams.find((row) => row.key === param.key);
+    if (!hit) return false;
+    if (param.required && !hit.required) return false;
+  }
+  return true;
+}
+
+function integrationMatchesToolSchema(integration, tool, expectedUrl) {
+  if (integration.method && integration.method !== tool.method) return false;
+  if (!integrationUrlMatchesTool(integration.url, tool.path, expectedUrl)) return false;
+  if (!paramsMatchExpected(integration.body_params, tool.body_params)) return false;
+  if (!paramsMatchExpected(integration.query_params, tool.query_params)) return false;
+  return true;
+}
+
 function integrationUrlMatchesTool(url, toolPath, expectedUrl) {
   if (!url) return false;
   if (normalizeUrl(url) === normalizeUrl(expectedUrl)) return true;
@@ -81,7 +162,13 @@ function isDuplicateIntegrationSignal(err, body) {
 }
 
 function buildIntegrationNameCandidates(toolName, restaurantId, baseUrl) {
-  const candidates = [toolName, `${toolName}_${restaurantId}`];
+  const candidates = [
+    toolName,
+    `${toolName}_${restaurantId}`,
+    `${toolName}_r${restaurantId}`,
+    `${toolName}_v2`,
+    `${toolName}_r${restaurantId}_v2`,
+  ];
   if (!isUnreachableFromCloud(baseUrl)) candidates.push(`${toolName}_prod`);
   return [...new Set(candidates)];
 }
@@ -149,11 +236,13 @@ async function resolveIntegrationId(omnidim, tool, baseUrl, apiKey, restaurantId
       name,
       url: expectedUrl,
       method: tool.method,
-      description: tool.name,
+      description: tool.description ?? tool.name,
       headers: [
         { key: "Authorization", value: `Bearer ${apiKey}` },
         { key: "X-Restaurant-Key", value: apiKey },
       ],
+      query_params: tool.query_params,
+      body_params: tool.body_params,
       request_timeout: 30,
     });
     if (integrationId != null) {
@@ -165,14 +254,18 @@ async function resolveIntegrationId(omnidim, tool, baseUrl, apiKey, restaurantId
 
     const orgIntegrations = await fetchOrgIntegrations(omnidim);
     const reusable = findReusableOrgIntegration(orgIntegrations, tool, expectedUrl, [name, ...nameCandidates]);
-    if (reusable) {
+    if (reusable && integrationMatchesToolSchema(reusable, tool, expectedUrl)) {
       console.log(`  ~ reusing integration ${reusable.id} ("${reusable.name}") for ${tool.name}`);
       return reusable.id;
     }
   }
 
   const orgIntegrations = await fetchOrgIntegrations(omnidim);
-  const byUrl = orgIntegrations.find((row) => normalizeUrl(row.url) === normalizeUrl(expectedUrl));
+  const byUrl = orgIntegrations.find(
+    (row) =>
+      normalizeUrl(row.url) === normalizeUrl(expectedUrl) &&
+      integrationMatchesToolSchema(row, tool, expectedUrl),
+  );
   if (byUrl) {
     console.log(`  ~ reusing integration ${byUrl.id} by URL for ${tool.name}`);
     return byUrl.id;
@@ -191,13 +284,11 @@ async function attachIntegrationToAgent(omnidim, agentId, integrationId) {
   }
 }
 
-function findAttachedIntegrationWithUrl(liveIntegrations, expectedUrl, toolPath) {
-  const normalizedExpected = normalizeUrl(expectedUrl);
+function findAttachedIntegration(liveIntegrations, tool, expectedUrl) {
   for (const row of liveIntegrations) {
-    if (normalizeUrl(row.url) === normalizedExpected) return row.id;
-    if (integrationUrlMatchesTool(row.url, toolPath, expectedUrl)) {
-      if (normalizeUrl(row.url) === normalizedExpected) return row.id;
-    }
+    if (normalizeUrl(row.url) !== normalizeUrl(expectedUrl)) continue;
+    if (!integrationMatchesToolSchema(row, tool, expectedUrl)) continue;
+    return row;
   }
   return null;
 }
@@ -301,26 +392,31 @@ async function main() {
 
       for (const tool of CHERRY_VOICE_TOOLS) {
         const expectedUrl = buildUrl(baseUrl, tool.path);
-        const attachedId = findAttachedIntegrationWithUrl(liveIntegrations, expectedUrl, tool.path);
+        const attached = findAttachedIntegration(liveIntegrations, tool, expectedUrl);
         const knownId = dbByTool.get(tool.name);
 
-        if (attachedId != null) {
-          console.log(`  ✓ ${tool.name} already attached at ${expectedUrl}`);
-          if (knownId !== attachedId) {
+        if (attached != null) {
+          console.log(`  ✓ ${tool.name} already attached with valid schema at ${expectedUrl}`);
+          if (knownId !== attached.id) {
             await conn.query(
               `INSERT INTO omnidim_agent_integrations (restaurant_id, omnidim_agent_id, omnidim_integration_id, tool_name)
                VALUES (?, ?, ?, ?)
                ON DUPLICATE KEY UPDATE omnidim_integration_id = VALUES(omnidim_integration_id)`,
-              [rid, agentId, attachedId, tool.name],
+              [rid, agentId, attached.id, tool.name],
             );
           }
           continue;
         }
 
-        if (knownId) {
+        const staleIds = new Set();
+        if (knownId) staleIds.add(knownId);
+        for (const row of liveIntegrations) {
+          if (integrationUrlMatchesTool(row.url, tool.path, expectedUrl)) staleIds.add(row.id);
+        }
+        for (const staleId of staleIds) {
           try {
-            await omnidim.integrations.removeFromAgent(agentId, knownId);
-            console.log(`  - removed stale ${tool.name} (${knownId})`);
+            await omnidim.integrations.removeFromAgent(agentId, staleId);
+            console.log(`  - removed stale ${tool.name} (${staleId})`);
           } catch (err) {
             console.warn(`  ! could not remove ${tool.name}: ${err.message}`);
           }

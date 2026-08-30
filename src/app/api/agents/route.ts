@@ -8,6 +8,7 @@ import { getOmnidim } from "@/lib/omnidim";
 import { listAgents, upsertAgentMapping } from "@/lib/repositories/agents";
 import { sanitizePlatformError } from "@/lib/platform-errors";
 import { provisionAgentWithIntegrations } from "@/lib/services/agent-provisioning";
+import { OMNIDIM_AGENT_VOICE_DEFAULTS } from "@/lib/services/omnidim-agent-defaults";
 import { findReusableAgent, type AgentRow } from "@/lib/services/agent-reuse";
 import { generateAgentPrompt } from "@/lib/services/onboarding-extract";
 
@@ -92,6 +93,7 @@ export async function POST(req: Request) {
 
     const createPayload = {
       ...(body ?? {}),
+      ...OMNIDIM_AGENT_VOICE_DEFAULTS,
       name: parsed.data.name,
       welcome_message:
         parsed.data.welcome_message ?? "Thanks for calling! How can I help you today?",

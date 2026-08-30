@@ -15,6 +15,7 @@ import {
 } from "@/lib/repositories/agents";
 import { sanitizePlatformError } from "@/lib/platform-errors";
 import { appendIntegrationToolsPrompt, provisionAgentWithIntegrations } from "@/lib/services/agent-provisioning";
+import { applyAgentVoiceDefaults } from "@/lib/services/omnidim-agent-defaults";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -95,6 +96,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
     if (Object.keys(updatePayload).length) {
       await provisionAgentWithIntegrations(restaurantId, mapping.omnidim_agent_id);
       await omnidim.agents.update(mapping.omnidim_agent_id, updatePayload as never);
+      await applyAgentVoiceDefaults(mapping.omnidim_agent_id);
       await appendIntegrationToolsPrompt(mapping.omnidim_agent_id);
     }
 

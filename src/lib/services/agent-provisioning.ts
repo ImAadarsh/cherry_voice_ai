@@ -8,7 +8,8 @@ import {
   listAgentIntegrations,
   upsertAgentIntegration,
 } from "@/lib/repositories/integration-keys";
-import { INTEGRATION_TOOLS_PROMPT } from "@/lib/integration-tools";
+import { INTEGRATION_TOOLS_PROMPT, VOICE_STYLE_PROMPT } from "@/lib/integration-tools";
+import { applyAgentVoiceDefaults } from "@/lib/services/omnidim-agent-defaults";
 
 export interface CherryVoiceToolDef {
   name: string;
@@ -24,18 +25,35 @@ export const CHERRY_VOICE_TOOLS: CherryVoiceToolDef[] = [
     name: "create_order",
     method: "POST",
     path: "/api/integrations/omnidim/create-order",
-    description: "Place a new order for the caller. Saves items to the restaurant database.",
+    description:
+      "Place a new order after collecting customer phone, name, pickup/delivery, and all items with quantities.",
     body_params: [
-      { key: "phone", description: "Customer phone (E.164)", type: "string", required: true },
-      { key: "name", description: "Customer name", type: "string" },
-      { key: "order_type", description: "pickup or delivery", type: "string" },
       {
-        key: "items",
-        description: "JSON array of {name, quantity, sku?, notes?}",
+        key: "phone",
+        description: "Customer phone number with country code (required before calling)",
         type: "string",
         required: true,
       },
-      { key: "notes", description: "Order notes", type: "string" },
+      {
+        key: "name",
+        description: "Customer full name",
+        type: "string",
+        required: true,
+      },
+      {
+        key: "order_type",
+        description: "pickup or delivery",
+        type: "string",
+        required: true,
+      },
+      {
+        key: "items",
+        description:
+          'JSON array of order line items, e.g. [{"name":"Pepperoni Pizza","quantity":1}]',
+        type: "string",
+        required: true,
+      },
+      { key: "notes", description: "Special instructions or allergies", type: "string" },
     ],
   },
   {
@@ -86,7 +104,14 @@ export const CHERRY_VOICE_TOOLS: CherryVoiceToolDef[] = [
 ];
 
 type OmnidimClient = Awaited<ReturnType<typeof getOmnidim>>;
-type OrgIntegration = { id: number; name: string; url?: string };
+type OrgIntegration = {
+  id: number;
+  name: string;
+  url?: string;
+  method?: string;
+  body_params?: IntegrationParam[];
+  query_params?: IntegrationParam[];
+};
 
 function extractIntegrationId(res: Record<string, unknown>): number | null {
   const integration = res.integration as Record<string, unknown> | undefined;
@@ -98,6 +123,34 @@ function extractIntegrationId(res: Record<string, unknown>): number | null {
 
 function normalizeUrl(url: string | undefined): string {
   return (url ?? "").replace(/\/$/, "");
+}
+
+type IntegrationParam = NonNullable<CustomApiIntegrationInput["body_params"]>[number];
+
+function paramsMatchExpected(
+  actual: IntegrationParam[] | undefined,
+  expected: IntegrationParam[] | undefined,
+): boolean {
+  if (!expected?.length) return true;
+  const actualParams = actual ?? [];
+  for (const param of expected) {
+    const hit = actualParams.find((row) => row.key === param.key);
+    if (!hit) return false;
+    if (param.required && !hit.required) return false;
+  }
+  return true;
+}
+
+function integrationMatchesToolSchema(
+  integration: { body_params?: IntegrationParam[]; query_params?: IntegrationParam[]; method?: string; url?: string },
+  tool: CherryVoiceToolDef,
+  expectedUrl: string,
+): boolean {
+  if (integration.method && integration.method !== tool.method) return false;
+  if (!integrationUrlMatchesTool(integration.url, tool.path, expectedUrl)) return false;
+  if (!paramsMatchExpected(integration.body_params, tool.body_params)) return false;
+  if (!paramsMatchExpected(integration.query_params, tool.query_params)) return false;
+  return true;
 }
 
 function integrationUrlMatchesTool(
@@ -138,7 +191,13 @@ function buildIntegrationNameCandidates(
   restaurantId: number,
   baseUrl: string,
 ): string[] {
-  const candidates = [toolName, `${toolName}_${restaurantId}`];
+  const candidates = [
+    toolName,
+    `${toolName}_${restaurantId}`,
+    `${toolName}_r${restaurantId}`,
+    `${toolName}_v2`,
+    `${toolName}_r${restaurantId}_v2`,
+  ];
   if (!isUnreachableFromCloud(baseUrl)) {
     candidates.push(`${toolName}_prod`);
   }
@@ -166,31 +225,44 @@ function buildToolIntegration(
   };
 }
 
+type LiveIntegration = {
+  id: number;
+  name: string;
+  url?: string;
+  method?: string;
+  body_params?: IntegrationParam[];
+  query_params?: IntegrationParam[];
+};
+
+async function fetchAgentIntegrations(omnidim: OmnidimClient, agentId: string): Promise<LiveIntegration[]> {
+  const res = (await omnidim.integrations.listForAgent(agentId)) as {
+    integrations?: LiveIntegration[];
+  };
+  return res.integrations ?? [];
+}
+
 async function fetchAgentIntegrationMap(
   omnidim: OmnidimClient,
   agentId: string,
 ): Promise<Map<string, { id: number; url?: string }>> {
-  const res = (await omnidim.integrations.listForAgent(agentId)) as {
-    integrations?: Array<{ id: number; name: string; url?: string }>;
-  };
   const map = new Map<string, { id: number; url?: string }>();
-  for (const row of res.integrations ?? []) {
+  for (const row of await fetchAgentIntegrations(omnidim, agentId)) {
     if (row.name) map.set(row.name, { id: row.id, url: row.url });
   }
   return map;
 }
 
-function findAttachedIntegrationWithUrl(
-  liveIntegrations: Map<string, { id: number; url?: string }>,
+function findAttachedIntegration(
+  liveIntegrations: LiveIntegration[],
+  tool: CherryVoiceToolDef,
   expectedUrl: string,
-  toolPath: string,
-): number | null {
+): LiveIntegration | null {
   const normalizedExpected = normalizeUrl(expectedUrl);
-  for (const row of liveIntegrations.values()) {
-    if (normalizeUrl(row.url) === normalizedExpected) return row.id;
-    if (integrationUrlMatchesTool(row.url, toolPath, expectedUrl)) {
-      if (normalizeUrl(row.url) === normalizedExpected) return row.id;
-    }
+  for (const row of liveIntegrations) {
+    if (normalizeUrl(row.url) !== normalizedExpected) continue;
+    if (!integrationUrlMatchesTool(row.url, tool.path, expectedUrl)) continue;
+    if (!integrationMatchesToolSchema(row, tool, expectedUrl)) continue;
+    return row;
   }
   return null;
 }
@@ -289,7 +361,7 @@ async function resolveIntegrationId(
 
     const orgIntegrations = await fetchOrgIntegrations(omnidim);
     const reusable = findReusableOrgIntegration(orgIntegrations, tool, expectedUrl, [name, ...nameCandidates]);
-    if (reusable) {
+    if (reusable && integrationMatchesToolSchema(reusable, tool, expectedUrl)) {
       console.info(
         `[agent-provisioning] Reusing integration ${reusable.id} ("${reusable.name}") for ${tool.name} (restaurant ${restaurantId})`,
       );
@@ -299,7 +371,9 @@ async function resolveIntegrationId(
 
   const orgIntegrations = await fetchOrgIntegrations(omnidim);
   const byUrl = orgIntegrations.find(
-    (row) => normalizeUrl(row.url) === normalizeUrl(expectedUrl),
+    (row) =>
+      normalizeUrl(row.url) === normalizeUrl(expectedUrl) &&
+      integrationMatchesToolSchema(row, tool, expectedUrl),
   );
   if (byUrl) {
     console.info(
@@ -359,35 +433,35 @@ export async function provisionAgentWithIntegrations(
   const baseUrl = env.APP_BASE_URL;
   const existing = await listAgentIntegrations(restaurantId, agentId);
   const existingByTool = new Map(existing.map((row) => [row.tool_name, row.omnidim_integration_id]));
-  const liveIntegrations = await fetchAgentIntegrationMap(omnidim, agentId);
+  let liveIntegrations = await fetchAgentIntegrations(omnidim, agentId);
   const integrationIds: Record<string, number> = {};
 
   for (const tool of CHERRY_VOICE_TOOLS) {
     const expectedUrl = buildIntegrationUrl(baseUrl, tool.path);
     const knownId = existingByTool.get(tool.name);
-    const attachedId = findAttachedIntegrationWithUrl(liveIntegrations, expectedUrl, tool.path);
+    const attached = findAttachedIntegration(liveIntegrations, tool, expectedUrl);
 
-    if (attachedId != null) {
-      integrationIds[tool.name] = attachedId;
-      if (knownId !== attachedId) {
+    if (attached != null) {
+      integrationIds[tool.name] = attached.id;
+      if (knownId !== attached.id) {
         await upsertAgentIntegration({
           restaurantId,
           omnidimAgentId: agentId,
-          omnidimIntegrationId: attachedId,
+          omnidimIntegrationId: attached.id,
           toolName: tool.name,
         });
       }
       continue;
     }
 
-    if (knownId != null && liveIntegrations.get(tool.name)?.url === expectedUrl) {
-      integrationIds[tool.name] = knownId;
-      continue;
+    const staleIds = new Set<number>();
+    if (knownId != null) staleIds.add(knownId);
+    for (const row of liveIntegrations) {
+      if (integrationUrlMatchesTool(row.url, tool.path, expectedUrl)) staleIds.add(row.id);
     }
-
-    if (knownId != null) {
+    for (const staleId of staleIds) {
       try {
-        await omnidim.integrations.removeFromAgent(agentId, knownId);
+        await omnidim.integrations.removeFromAgent(agentId, staleId);
       } catch {
         /* old integration may already be detached */
       }
@@ -401,31 +475,50 @@ export async function provisionAgentWithIntegrations(
       apiKey,
       restaurantId,
     );
+    liveIntegrations = await fetchAgentIntegrations(omnidim, agentId);
   }
 
-  await appendIntegrationToolsPrompt(agentId);
+  await upsertAgentPromptBlocks(agentId);
+  await applyAgentVoiceDefaults(agentId);
 
   return { integrationIds, apiKey };
 }
 
-/** Append tool usage instructions to the agent context (best-effort). */
-export async function appendIntegrationToolsPrompt(omnidimAgentId: string | number): Promise<void> {
+const MANAGED_PROMPT_BLOCKS: Array<{ title: string; body: string }> = [
+  { title: "Voice style", body: VOICE_STYLE_PROMPT },
+  { title: "API Tools", body: INTEGRATION_TOOLS_PROMPT },
+];
+
+function isManagedPromptTitle(title: unknown): boolean {
+  if (typeof title !== "string") return false;
+  const normalized = title.toLowerCase();
+  return MANAGED_PROMPT_BLOCKS.some((block) => normalized.includes(block.title.toLowerCase()));
+}
+
+/** Upsert voice-style and API-tool prompt blocks on the agent (best-effort). */
+export async function upsertAgentPromptBlocks(omnidimAgentId: string | number): Promise<void> {
   const omnidim = await getOmnidim();
   try {
     const agent = (await omnidim.agents.get(omnidimAgentId)) as Record<string, unknown>;
     const breakdown = (agent.context_breakdown as Array<Record<string, unknown>> | undefined) ?? [];
-    const hasTools = breakdown.some(
-      (block) => typeof block.title === "string" && block.title.toLowerCase().includes("api tools"),
-    );
-    if (hasTools) return;
-
+    const preserved = breakdown.filter((block) => !isManagedPromptTitle(block.title ?? block.context_title));
     await omnidim.agents.update(omnidimAgentId, {
       context_breakdown: [
-        ...breakdown,
-        { title: "API Tools", body: INTEGRATION_TOOLS_PROMPT, type: "text" },
+        ...preserved,
+        ...MANAGED_PROMPT_BLOCKS.map((block) => ({
+          title: block.title,
+          body: block.body,
+          type: "text",
+          is_enabled: true,
+        })),
       ],
     } as never);
   } catch {
     /* non-fatal — agent still has integrations attached */
   }
+}
+
+/** @deprecated Use upsertAgentPromptBlocks */
+export async function appendIntegrationToolsPrompt(omnidimAgentId: string | number): Promise<void> {
+  await upsertAgentPromptBlocks(omnidimAgentId);
 }

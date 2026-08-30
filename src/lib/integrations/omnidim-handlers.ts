@@ -29,16 +29,29 @@ function parseItems(raw: unknown): Array<{
   return [];
 }
 
-const createOrderSchema = z.object({
-  phone: z.string().min(3),
-  name: z.string().optional(),
-  email: z.string().optional(),
-  address: z.string().optional(),
-  order_type: z.enum(["pickup", "delivery", "dine_in"]).optional(),
-  items: z.union([z.array(z.record(z.string(), z.unknown())), z.string()]),
-  notes: z.string().optional(),
-  agent_id: z.union([z.string(), z.number()]).optional(),
-});
+const createOrderSchema = z
+  .object({
+    phone: z.string().min(3).optional(),
+    customer_phone: z.string().min(3).optional(),
+    name: z.string().optional(),
+    customer_name: z.string().optional(),
+    email: z.string().optional(),
+    address: z.string().optional(),
+    order_type: z.enum(["pickup", "delivery", "dine_in"]).optional(),
+    items: z.union([z.array(z.record(z.string(), z.unknown())), z.string()]).optional(),
+    notes: z.string().optional(),
+    agent_id: z.union([z.string(), z.number()]).optional(),
+    speak_first: z.string().optional(),
+  })
+  .superRefine((data, ctx) => {
+    const phone = data.phone ?? data.customer_phone;
+    if (!phone?.trim()) {
+      ctx.addIssue({ code: "custom", message: "phone is required", path: ["phone"] });
+    }
+    if (data.items == null) {
+      ctx.addIssue({ code: "custom", message: "items is required", path: ["items"] });
+    }
+  });
 
 export async function handleCreateOrder(restaurantId: number, body: unknown) {
   const parsed = createOrderSchema.safeParse(body ?? {});
@@ -51,7 +64,7 @@ export async function handleCreateOrder(restaurantId: number, body: unknown) {
     return { status: 422 as const, body: { error: "At least one item is required" } };
   }
 
-  const phone = normalizePhoneInput(parsed.data.phone);
+  const phone = normalizePhoneInput(parsed.data.phone ?? parsed.data.customer_phone ?? "");
   if (phone.replace(/\D/g, "").length < 7) {
     return { status: 422 as const, body: { error: "A valid customer phone number is required" } };
   }
@@ -69,7 +82,7 @@ export async function handleCreateOrder(restaurantId: number, body: unknown) {
     agentId,
     customer: {
       phone,
-      name: parsed.data.name ?? null,
+      name: parsed.data.name ?? parsed.data.customer_name ?? null,
       email: parsed.data.email ?? null,
       address: parsed.data.address ?? null,
     },
