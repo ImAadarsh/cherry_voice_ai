@@ -18,7 +18,7 @@ export async function getCherryVoiceGeminiModel(): Promise<string> {
     fromDb?.trim() ||
     env.CHERRY_VOICE_GEMINI_MODEL ||
     env.GEMINI_MODEL ||
-    "gemini-2.0-flash-lite"
+    "gemini-3.5-flash-lite"
   ).trim();
 }
 
