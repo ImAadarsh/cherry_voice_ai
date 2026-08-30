@@ -19,7 +19,7 @@ export async function POST(req: Request) {
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
 
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) return key;
 
   const body = await readJson(req);
@@ -41,7 +41,7 @@ export async function POST(req: Request) {
     });
 
     if (!session.ws_url) {
-      return fail("Omnidim did not return a WebSocket URL", 502);
+      return fail("Voice platform did not return a WebSocket URL", 502);
     }
 
     return ok(

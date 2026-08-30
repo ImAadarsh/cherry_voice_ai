@@ -2,7 +2,7 @@ import "server-only";
 import type { CustomApiIntegrationInput } from "@omnidim-ai/sdk";
 import { env } from "@/lib/env";
 import { buildIntegrationUrl } from "@/lib/app-base-url";
-import { omnidim } from "@/lib/omnidim";
+import { getOmnidim } from "@/lib/omnidim";
 import {
   getOrCreateIntegrationApiKey,
   listAgentIntegrations,
@@ -113,7 +113,10 @@ function buildToolIntegration(
   };
 }
 
-async function fetchAgentIntegrationMap(agentId: string): Promise<Map<string, { id: number; url?: string }>> {
+async function fetchAgentIntegrationMap(
+  omnidim: Awaited<ReturnType<typeof getOmnidim>>,
+  agentId: string,
+): Promise<Map<string, { id: number; url?: string }>> {
   const res = (await omnidim.integrations.listForAgent(agentId)) as {
     integrations?: Array<{ id: number; name: string; url?: string }>;
   };
@@ -125,6 +128,7 @@ async function fetchAgentIntegrationMap(agentId: string): Promise<Map<string, { 
 }
 
 async function createAndAttachIntegration(
+  omnidim: Awaited<ReturnType<typeof getOmnidim>>,
   tool: CherryVoiceToolDef,
   agentId: string,
   baseUrl: string,
@@ -155,12 +159,13 @@ export async function provisionAgentWithIntegrations(
   restaurantId: number,
   omnidimAgentId: string | number,
 ): Promise<{ integrationIds: Record<string, number>; apiKey: string }> {
+  const omnidim = await getOmnidim();
   const agentId = String(omnidimAgentId);
   const apiKey = await getOrCreateIntegrationApiKey(restaurantId);
   const baseUrl = env.APP_BASE_URL;
   const existing = await listAgentIntegrations(restaurantId, agentId);
   const existingByTool = new Map(existing.map((row) => [row.tool_name, row.omnidim_integration_id]));
-  const liveIntegrations = await fetchAgentIntegrationMap(agentId);
+  const liveIntegrations = await fetchAgentIntegrationMap(omnidim, agentId);
   const integrationIds: Record<string, number> = {};
 
   for (const tool of CHERRY_VOICE_TOOLS) {
@@ -182,6 +187,7 @@ export async function provisionAgentWithIntegrations(
     }
 
     integrationIds[tool.name] = await createAndAttachIntegration(
+      omnidim,
       tool,
       agentId,
       baseUrl,
@@ -197,6 +203,7 @@ export async function provisionAgentWithIntegrations(
 
 /** Append tool usage instructions to the agent context (best-effort). */
 export async function appendIntegrationToolsPrompt(omnidimAgentId: string | number): Promise<void> {
+  const omnidim = await getOmnidim();
   try {
     const agent = (await omnidim.agents.get(omnidimAgentId)) as Record<string, unknown>;
     const breakdown = (agent.context_breakdown as Array<Record<string, unknown>> | undefined) ?? [];

@@ -146,7 +146,7 @@ export function mapAgentRow(row: Record<string, unknown>): VoiceAgent {
     callsToday: 0,
     avgDuration: 0,
     successRate: active ? 0.9 : 0,
-    model: "omnidim",
+    model: "cherry-voice",
   };
 }
 

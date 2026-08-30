@@ -117,10 +117,10 @@ export const orders: Order[] = [
 ];
 
 export const voiceAgents: VoiceAgent[] = [
-  { id: "a-1", omnidimAgentId: "omni-a-1", name: "Ruby", role: "Order Taker", status: "online", phoneNumber: "+1 (503) 555-0142", language: "English (US)", voice: "Warm Female", callsToday: 47, avgDuration: 132, successRate: 0.94, model: "omnidim-voice-2" },
-  { id: "a-2", omnidimAgentId: "omni-a-2", name: "Milo", role: "Reservations", status: "online", phoneNumber: "+1 (503) 555-0143", language: "English (US)", voice: "Friendly Male", callsToday: 22, avgDuration: 96, successRate: 0.89, model: "omnidim-voice-2" },
-  { id: "a-3", omnidimAgentId: "omni-a-3", name: "Sol", role: "After-hours Support", status: "idle", phoneNumber: "+1 (503) 555-0144", language: "Spanish (MX)", voice: "Calm Neutral", callsToday: 6, avgDuration: 148, successRate: 0.82, model: "omnidim-voice-2" },
-  { id: "a-4", omnidimAgentId: "omni-a-4", name: "Nova", role: "Feedback & Surveys", status: "offline", phoneNumber: "+1 (503) 555-0145", language: "English (US)", voice: "Bright Female", callsToday: 0, avgDuration: 0, successRate: 0, model: "omnidim-voice-1" },
+  { id: "a-1", omnidimAgentId: "omni-a-1", name: "Ruby", role: "Order Taker", status: "online", phoneNumber: "+1 (503) 555-0142", language: "English (US)", voice: "Warm Female", callsToday: 47, avgDuration: 132, successRate: 0.94, model: "cherry-voice-2" },
+  { id: "a-2", omnidimAgentId: "omni-a-2", name: "Milo", role: "Reservations", status: "online", phoneNumber: "+1 (503) 555-0143", language: "English (US)", voice: "Friendly Male", callsToday: 22, avgDuration: 96, successRate: 0.89, model: "cherry-voice-2" },
+  { id: "a-3", omnidimAgentId: "omni-a-3", name: "Sol", role: "After-hours Support", status: "idle", phoneNumber: "+1 (503) 555-0144", language: "Spanish (MX)", voice: "Calm Neutral", callsToday: 6, avgDuration: 148, successRate: 0.82, model: "cherry-voice-2" },
+  { id: "a-4", omnidimAgentId: "omni-a-4", name: "Nova", role: "Feedback & Surveys", status: "offline", phoneNumber: "+1 (503) 555-0145", language: "English (US)", voice: "Bright Female", callsToday: 0, avgDuration: 0, successRate: 0, model: "cherry-voice-1" },
 ];
 
 export const callLogs: CallLog[] = [

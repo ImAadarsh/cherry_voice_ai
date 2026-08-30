@@ -10,6 +10,7 @@ import { KpiCard } from "@/components/dashboard/kpi-card";
 import { ErrorState } from "@/components/shared/states";
 import { useApiQuery } from "@/hooks/use-api-query";
 import { useAuth } from "@/hooks/use-auth";
+import { isSuperAdminRole } from "@/lib/nav";
 import { useCurrency } from "@/hooks/use-currency";
 import { toMajor } from "@/lib/currency";
 
@@ -31,12 +32,12 @@ type RestaurantRow = {
 export default function AdminPage() {
   const { user, loading: authLoading } = useAuth();
   const { formatMajor } = useCurrency();
-  const isAdmin = user?.role === "platform_admin";
+  const isAdmin = isSuperAdminRole(user?.role);
 
   const { data, loading, error, retry } = useApiQuery<{
     restaurants: RestaurantRow[];
     stats: { restaurants: number; orders: number; calls: number; customers: number };
-  }>(isAdmin ? "/api/admin/restaurants" : null);
+  }>(isAdmin ? "/api/super-admin/restaurants" : null);
 
   if (!authLoading && !isAdmin) {
     return (
@@ -44,7 +45,7 @@ export default function AdminPage() {
         <PageHeader title="Platform Admin" description="Super-admin access required." />
         <ErrorState
           title="Access denied"
-          description="Sign in as a platform admin (admin@cherryvoice.test) to manage all restaurants."
+          description="Sign in as super admin (superadmin@cherryvoiceai.com) to manage all restaurants."
         />
       </div>
     );

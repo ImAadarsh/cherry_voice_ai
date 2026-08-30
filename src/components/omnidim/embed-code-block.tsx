@@ -37,8 +37,8 @@ export function EmbedCodeBlock({ agentId }: EmbedCodeBlockProps) {
   if (!data?.available || !code) {
     return (
       <p className="text-sm text-muted-foreground">
-        Widget embed is not configured for this agent yet. Use the Sessions API web call
-        below, or enable the web widget in the Omnidim dashboard.
+        Website voice widget is not configured for this agent yet. Use the browser demo call
+        below, or contact support to enable the web widget.
       </p>
     );
   }
@@ -56,19 +56,6 @@ export function EmbedCodeBlock({ agentId }: EmbedCodeBlockProps) {
         {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
         {copied ? "Copied" : "Copy embed code"}
       </Button>
-      {data.iframe_url && (
-        <p className="text-xs text-muted-foreground">
-          Direct URL:{" "}
-          <a
-            href={data.iframe_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-primary underline-offset-2 hover:underline"
-          >
-            {data.iframe_url}
-          </a>
-        </p>
-      )}
     </div>
   );
 }

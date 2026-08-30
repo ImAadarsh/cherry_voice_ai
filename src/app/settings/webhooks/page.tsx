@@ -95,7 +95,7 @@ export default function WebhooksSettingsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Webhook logs"
-        description="Inbound events from Omnidim and payment gateways — audit and debug."
+        description="Inbound events from voice agents and payment gateways — audit and debug."
       >
         <Button variant="outline" size="sm" asChild>
           <Link href="/settings/general">Back to settings</Link>
@@ -112,7 +112,7 @@ export default function WebhooksSettingsPage() {
           searchKey="event_type"
           searchPlaceholder="Filter by event…"
           emptyTitle="No webhooks logged"
-          emptyDescription="Webhook events appear here when Omnidim or payment providers POST to your endpoints."
+          emptyDescription="Webhook events appear here when voice agents or payment providers POST to your endpoints."
           pageSize={15}
         />
       )}

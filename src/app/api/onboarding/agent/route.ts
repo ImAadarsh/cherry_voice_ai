@@ -2,7 +2,8 @@ import { z } from "zod";
 import { ok, fail, readJson } from "@/lib/http";
 import { requireRestaurantId } from "@/lib/route-auth";
 import { env } from "@/lib/env";
-import { omnidim } from "@/lib/omnidim";
+import { isOmnidimConfigured } from "@/lib/platform-config";
+import { getOmnidim } from "@/lib/omnidim";
 import { upsertAgentMapping } from "@/lib/repositories/agents";
 import { provisionAgentWithIntegrations } from "@/lib/services/agent-provisioning";
 import { generateAgentPrompt } from "@/lib/services/onboarding-extract";
@@ -25,9 +26,10 @@ const createSchema = z
  * Creates an Omnidim agent during onboarding and auto-provisions Cherry Voice API integrations.
  */
 export async function POST(req: Request) {
+  const omnidim = await getOmnidim();
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
-  if (!env.OMNIDIM_API_KEY) return fail("OMNIDIM_API_KEY is not configured", 503);
+  if (!(await isOmnidimConfigured())) return fail("Voice AI platform is not configured. Contact support.", 503);
 
   const body = await readJson<Record<string, unknown>>(req);
   const parsed = createSchema.safeParse(body ?? {});
@@ -56,7 +58,7 @@ export async function POST(req: Request) {
       ((created?.bot as Record<string, unknown>)?.id as string | number | undefined);
 
     if (omnidimAgentId == null) {
-      return fail("Omnidim did not return an agent id", 502);
+      return fail("Voice platform did not return an agent id", 502);
     }
 
     const localId = await upsertAgentMapping({

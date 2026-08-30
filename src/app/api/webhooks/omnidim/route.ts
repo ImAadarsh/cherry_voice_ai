@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { env } from "@/lib/env";
+import { getOmnidimWebhookSecret } from "@/lib/platform-config";
 import { ok, fail } from "@/lib/http";
 import { recordWebhook, markWebhook } from "@/lib/repositories/webhooks";
 import { findAgentByOmnidimId, findAgentByPhoneNumber } from "@/lib/repositories/agents";
@@ -27,11 +27,12 @@ export async function POST(req: Request) {
 
   // Optional signature verification.
   let signatureValid: boolean | null = null;
-  if (env.OMNIDIM_WEBHOOK_SECRET) {
+  const webhookSecret = await getOmnidimWebhookSecret();
+  if (webhookSecret) {
     const provided =
       req.headers.get("x-omnidim-signature") || req.headers.get("x-signature") || "";
     const expected = crypto
-      .createHmac("sha256", env.OMNIDIM_WEBHOOK_SECRET)
+      .createHmac("sha256", webhookSecret)
       .update(rawBody)
       .digest("hex");
     signatureValid = timingSafe(expected, provided.replace(/^sha256=/, ""));

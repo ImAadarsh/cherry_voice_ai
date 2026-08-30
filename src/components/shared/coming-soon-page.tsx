@@ -37,7 +37,7 @@ export function ComingSoonPage({
       <EmptyState
         icon={Icon}
         title={`${title} is on the roadmap`}
-        description="This page is a UI placeholder while we wire up the Omnidim APIs below."
+        description="This page is a UI placeholder while we wire up the voice agent APIs below."
         action={
           relatedHref && relatedLabel ? (
             <Button variant="outline" size="sm" className="gap-2" asChild>

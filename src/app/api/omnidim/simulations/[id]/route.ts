@@ -10,7 +10,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
 
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) return key;
 
   try {

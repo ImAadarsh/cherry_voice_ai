@@ -18,6 +18,11 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
+/** Client-safe super-admin role check (includes legacy platform_admin). */
+export function isSuperAdminRole(role?: string | null): boolean {
+  return role === "super_admin" || role === "platform_admin";
+}
+
 export interface NavItem {
   label: string;
   href: string;
@@ -25,7 +30,7 @@ export interface NavItem {
   shortcut?: string;
   /** show in the mobile bottom bar */
   mobile?: boolean;
-  /** only visible to platform_admin */
+  /** only visible to super_admin */
   adminOnly?: boolean;
   /** expandable settings submenu */
   settingsMenu?: boolean;
@@ -40,7 +45,7 @@ export const settingsNavItems: SettingsNavItem[] = [
   { label: "General", href: "/settings/general" },
   { label: "Payment Gateways", href: "/settings/payment-gateways" },
   { label: "Notifications", href: "/settings/notifications" },
-  { label: "Omnidim", href: "/settings/omnidim" },
+  { label: "Voice AI Settings", href: "/settings/omnidim" },
   { label: "Agent Flows", href: "/settings/agent-flows" },
   { label: "Webhooks", href: "/settings/webhooks" },
 ];

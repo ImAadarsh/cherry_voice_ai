@@ -135,7 +135,7 @@ export default function CampaignsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Campaigns"
-        description="Bulk outbound call campaigns via Omnidim bulkCalls."
+        description="Bulk outbound call campaigns for your voice agents."
       >
         <div className="flex gap-2">
           <OmnidimSyncButton onSynced={refetch} />

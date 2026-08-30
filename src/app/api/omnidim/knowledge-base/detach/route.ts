@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ok, fail, readJson } from "@/lib/http";
 import { requireRestaurantId } from "@/lib/route-auth";
 import { requireOmnidimKey } from "@/lib/omnidim-api";
-import { omnidim } from "@/lib/omnidim";
+import { getOmnidim } from "@/lib/omnidim";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,10 +14,11 @@ const detachSchema = z.object({
 
 /** POST /api/omnidim/knowledge-base/detach */
 export async function POST(req: Request) {
+  const omnidim = await getOmnidim();
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
 
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) return key;
 
   const body = await readJson(req);

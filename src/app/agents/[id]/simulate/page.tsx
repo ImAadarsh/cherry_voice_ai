@@ -92,7 +92,7 @@ export default function AgentSimulatePage() {
             </CardHeader>
             <CardContent>
               <p className="mb-4 text-sm text-muted-foreground">
-                Talk to your agent in the browser — no phone number required. Uses Omnidim Sessions API.
+                Talk to your agent in the browser — no phone number required. Uses Cherry Voice AI browser sessions.
               </p>
               <WebCallPanel agentId={agentId} mode="demo" />
             </CardContent>
@@ -122,7 +122,7 @@ export default function AgentSimulatePage() {
               <CardContent>
                 <p className="text-sm text-muted-foreground">
                   {data?.message ??
-                    "The Omnidim simulations endpoint is not available on this account yet. Use the Live demo tab for browser testing."}
+                    "The agent simulations endpoint is not available on this account yet. Use the Live demo tab for browser testing."}
                 </p>
               </CardContent>
             </Card>

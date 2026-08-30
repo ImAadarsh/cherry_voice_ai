@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronLeft, LogOut } from "lucide-react";
-import { navItems, settingsNavItems } from "@/lib/nav";
+import { navItems, settingsNavItems, isSuperAdminRole } from "@/lib/nav";
 import { Logo } from "@/components/brand/logo";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -59,7 +59,7 @@ export function Sidebar({
       >
         <div className="flex flex-col gap-1">
         {navItems
-          .filter((item) => !item.adminOnly || user?.role === "platform_admin")
+          .filter((item) => !item.adminOnly || isSuperAdminRole(user?.role))
           .map((item) => {
             if (item.settingsMenu) {
               const Icon = item.icon;

@@ -2,7 +2,8 @@ import { z } from "zod";
 import { ok, fail, readJson } from "@/lib/http";
 import { requireRestaurantId } from "@/lib/route-auth";
 import { env } from "@/lib/env";
-import { omnidim } from "@/lib/omnidim";
+import { isOmnidimConfigured } from "@/lib/platform-config";
+import { getOmnidim } from "@/lib/omnidim";
 import { generatePromptFromFlow } from "@/lib/agent-flow-templates";
 import { getAgentFlow, updateAgentFlow } from "@/lib/repositories/agent-flows";
 import { getRestaurant } from "@/lib/repositories/settings";
@@ -21,9 +22,10 @@ export async function POST(
   req: Request,
   { params }: { params: { id: string } },
 ) {
+  const omnidim = await getOmnidim();
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
-  if (!env.OMNIDIM_API_KEY) return fail("OMNIDIM_API_KEY is not configured", 503);
+  if (!(await isOmnidimConfigured())) return fail("Voice AI platform is not configured. Contact support.", 503);
 
   const body = await readJson(req);
   const parsed = schema.safeParse(body ?? {});

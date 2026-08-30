@@ -20,6 +20,7 @@ import {
 import { readStoredFile } from "@/lib/services/file-storage";
 import { uploadPdfToKnowledgeBase } from "@/lib/omnidim-kb";
 import { env } from "@/lib/env";
+import { isOmnidimConfigured } from "@/lib/platform-config";
 import { INTEGRATION_TOOLS_PROMPT } from "@/lib/integration-tools";
 
 export interface ExtractionResult {
@@ -64,7 +65,7 @@ async function extractAsset(
   const buffer = await readStoredFile(asset.stored_path);
 
   if (asset.asset_type === "menu_pdf") {
-    if (env.OMNIDIM_API_KEY) {
+    if (await isOmnidimConfigured()) {
       try {
         await uploadPdfToKnowledgeBase(buffer, asset.original_filename);
         // Omnidim ingests PDF into KB; structured menu still needs Gemini or manual review.
@@ -72,7 +73,7 @@ async function extractAsset(
         /* fall through to Gemini */
       }
     }
-    if (isGeminiConfigured()) {
+    if (await isGeminiConfigured()) {
       const extraction = await extractMenuFromPdfBuffer(buffer.toString("base64"));
       return { extraction, provider: "gemini" };
     }
@@ -88,7 +89,7 @@ async function extractAsset(
   }
 
   if (asset.asset_type === "menu_image") {
-    if (isGeminiConfigured()) {
+    if (await isGeminiConfigured()) {
       const mime = asset.mime_type ?? "image/jpeg";
       const extraction = await extractMenuFromImage(buffer.toString("base64"), mime);
       return { extraction, provider: "gemini" };
@@ -109,7 +110,7 @@ async function extractAsset(
       }
     }
     const html = buffer.toString("utf8");
-    if (isGeminiConfigured()) {
+    if (await isGeminiConfigured()) {
       const extraction = await extractFromWebsite(html, url);
       return { extraction, provider: "gemini" };
     }
@@ -162,7 +163,7 @@ export async function runOnboardingExtraction(
 
   if (options?.plainText?.trim()) {
     try {
-      if (isGeminiConfigured()) {
+      if (await isGeminiConfigured()) {
         parts.push(await extractMenuFromPlainText(options.plainText));
         provider = "gemini";
       } else {

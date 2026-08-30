@@ -1,7 +1,7 @@
 import { ok, fail } from "@/lib/http";
 import { requireRestaurantId } from "@/lib/route-auth";
 import { requireOmnidimKey } from "@/lib/omnidim-api";
-import { omnidim } from "@/lib/omnidim";
+import { getOmnidim } from "@/lib/omnidim";
 import { resolveAgentMapping } from "@/lib/repositories/agents";
 
 export const runtime = "nodejs";
@@ -22,10 +22,11 @@ type WidgetConfig = {
 
 /** GET /api/omnidim/web-calls/embed?agent_id= — widget iframe embed code for an agent. */
 export async function GET(req: Request) {
+  const omnidim = await getOmnidim();
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
 
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) return key;
 
   const agentRef = new URL(req.url).searchParams.get("agent_id");
@@ -63,7 +64,7 @@ export async function GET(req: Request) {
       : null;
 
     const scriptEmbed = iframeUrl
-      ? `<!-- Cherry Voice AI · Omnidim voice widget -->
+      ? `<!-- Cherry Voice AI · Website voice widget -->
 <div id="cherry-voice-widget"></div>
 <script>
   (function () {

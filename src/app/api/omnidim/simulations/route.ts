@@ -12,7 +12,7 @@ export async function GET(req: Request) {
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
 
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) return key;
 
   const { searchParams } = new URL(req.url);
@@ -44,7 +44,7 @@ export async function POST(req: Request) {
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
 
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) return key;
 
   const body = await readJson(req);

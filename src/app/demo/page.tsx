@@ -38,7 +38,7 @@ export default function DemoPage() {
     <div className="space-y-6">
       <PageHeader
         title="Try your agent"
-        description="Browser voice demo powered by Omnidim Sessions — no phone number needed."
+        description="Browser voice demo — no phone number needed."
       >
         <Button variant="outline" size="sm" asChild>
           <Link href="/agents">Back to agents</Link>
@@ -79,8 +79,7 @@ export default function DemoPage() {
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Uses Omnidim <code className="rounded bg-muted px-1">POST /sessions/create</code>{" "}
-                with the <code className="rounded bg-muted px-1">@omnidim-ai/client</code> Web SDK.
+                Start a browser voice session with your selected agent. Microphone access required.
               </p>
             </CardContent>
           </Card>

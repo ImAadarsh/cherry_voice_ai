@@ -107,7 +107,7 @@ export function LandingVoiceDemo() {
               </Link>
             </Button>
             <p className="mt-3 text-xs text-muted-foreground">
-              Live browser demo available after onboarding · Omnidim API key required
+              Live browser demo available after onboarding
             </p>
           </div>
 
@@ -249,8 +249,7 @@ export function LandingVoiceDemo() {
                   Talk to Cherry Bistro live
                 </h3>
                 <p className="mx-auto mt-3 max-w-sm text-sm text-muted-foreground">
-                  Start a free account to launch a browser voice demo powered by
-                  Omnidim — no phone number required. Order a pizza for real.
+                  Start a free account to launch a browser voice demo — no phone number required. Order a pizza for real.
                 </p>
                 <Button size="lg" className="mt-8 gap-2 group" asChild>
                   <Link href="/onboarding">
@@ -259,7 +258,7 @@ export function LandingVoiceDemo() {
                   </Link>
                 </Button>
                 <p className="mt-4 text-xs text-muted-foreground">
-                  Requires Omnidim API credentials configured during setup
+                  Available after you complete onboarding
                 </p>
               </div>
             )}

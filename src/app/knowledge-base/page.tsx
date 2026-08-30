@@ -107,7 +107,7 @@ export default function KnowledgeBasePage() {
     <div className="space-y-6">
       <PageHeader
         title="Knowledge Base"
-        description="PDF brochures and policies for Omnidim RAG during calls."
+        description="PDF brochures and policies for voice agent knowledge during calls."
       >
         <div className="flex gap-2">
           <OmnidimSyncButton onSynced={refetch} />

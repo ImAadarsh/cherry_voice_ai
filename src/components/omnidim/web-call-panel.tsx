@@ -115,7 +115,7 @@ export function WebCallPanel({
       }>(endpoint, { agent_id: agentId });
 
       const wsUrl = data.session?.ws_url;
-      if (!wsUrl) throw new Error("No WebSocket URL returned from Omnidim");
+      if (!wsUrl) throw new Error("No WebSocket URL returned from voice platform");
 
       if (data.session?.session_id != null) {
         setSessionId(data.session.session_id);

@@ -16,7 +16,7 @@ export async function createUser(input: {
   name: string;
   email: string;
   password: string;
-  role?: "owner" | "admin" | "manager" | "staff" | "viewer";
+  role?: "super_admin" | "owner" | "admin" | "manager" | "staff" | "viewer";
   phone?: string | null;
 }): Promise<number> {
   const [res] = await pool.query<ResultSetHeader>(

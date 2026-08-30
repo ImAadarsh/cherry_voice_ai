@@ -206,7 +206,7 @@ export default function OnboardingPage() {
       }
 
       setProcessingStatus("extracting");
-      setProcessingMessage("Extracting menu & context (Gemini / Omnidim)…");
+      setProcessingMessage("Extracting menu & context…");
       const res = await api.post<{
         menuItems: Array<{ name: string; price: number; description?: string }>;
         status: ProcessingStatus;
@@ -317,7 +317,7 @@ export default function OnboardingPage() {
         const first = list[0];
         setSelectedPhone(String(first.id ?? first.phone_number ?? ""));
       }
-      toast.success(list.length ? `Found ${list.length} number(s)` : "No phone numbers in your Omnidim account");
+      toast.success(list.length ? `Found ${list.length} number(s)` : "No phone numbers in your account");
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -643,7 +643,7 @@ export default function OnboardingPage() {
                 {step === "voice" && (
                   <>
                     <p className="text-sm text-muted-foreground">
-                      Pick a voice for your agent with live preview from Omnidim providers.
+                      Pick a voice for your agent with live preview from available voice providers.
                     </p>
                     <VoicePicker
                       value={selectedVoice}
@@ -721,7 +721,7 @@ export default function OnboardingPage() {
                       <div className="mt-6 rounded-xl border bg-card p-4">
                         <h3 className="mb-1 font-semibold">Try your agent before go-live</h3>
                         <p className="mb-4 text-sm text-muted-foreground">
-                          Test a browser voice call — no phone number required. Powered by Omnidim Sessions.
+                          Test a browser voice call — no phone number required. Powered by Cherry Voice AI.
                         </p>
                         <WebCallPanel
                           agentId={createdAgentId}

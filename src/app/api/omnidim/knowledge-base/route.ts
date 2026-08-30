@@ -2,7 +2,7 @@ import { z } from "zod";
 import { ok, fail, readJson } from "@/lib/http";
 import { requireRestaurantId } from "@/lib/route-auth";
 import { requireOmnidimKey } from "@/lib/omnidim-api";
-import { omnidim } from "@/lib/omnidim";
+import { getOmnidim } from "@/lib/omnidim";
 import { uploadPdfToKnowledgeBase } from "@/lib/omnidim-kb";
 
 export const runtime = "nodejs";
@@ -10,10 +10,11 @@ export const dynamic = "force-dynamic";
 
 /** GET /api/omnidim/knowledge-base — list KB files. */
 export async function GET(req: Request) {
+  const omnidim = await getOmnidim();
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
 
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) return key;
 
   try {
@@ -26,10 +27,11 @@ export async function GET(req: Request) {
 
 /** POST /api/omnidim/knowledge-base — upload PDF (multipart or JSON base64). */
 export async function POST(req: Request) {
+  const omnidim = await getOmnidim();
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
 
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) return key;
 
   const contentType = req.headers.get("content-type") ?? "";
@@ -65,10 +67,11 @@ const attachSchema = z.object({
 
 /** PATCH /api/omnidim/knowledge-base — attach files to agent. */
 export async function PATCH(req: Request) {
+  const omnidim = await getOmnidim();
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
 
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) return key;
 
   const body = await readJson(req);

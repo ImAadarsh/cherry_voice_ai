@@ -21,8 +21,8 @@ const schema = z.object({
   DB_NAME: z.string().min(1),
   DB_CONNECTION_LIMIT: z.coerce.number().int().positive().default(10),
 
-  // OmniDimension
-  OMNIDIM_API_KEY: z.string().min(1),
+  // OmniDimension (optional when configured via super-admin platform_settings)
+  OMNIDIM_API_KEY: z.string().optional().default(""),
   OMNIDIM_WEBHOOK_SECRET: z.string().optional().default(""),
 
   // Google Gemini (optional — menu/website extraction fallback)

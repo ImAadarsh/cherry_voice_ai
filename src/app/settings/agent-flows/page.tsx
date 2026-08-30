@@ -138,7 +138,7 @@ export default function AgentFlowsSettingsPage() {
     <div className="space-y-5">
       <PageHeader
         title="Agent Flows"
-        description="Build structured conversation flows and generate Omnidim prompts."
+        description="Build structured conversation flows and generate voice agent prompts."
       >
         <Button size="sm" className="gap-1.5" onClick={createFlow}>
           <Plus className="h-4 w-4" /> New flow

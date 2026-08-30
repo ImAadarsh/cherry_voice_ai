@@ -4,7 +4,8 @@ import { handleRouteError } from "@/lib/api-error";
 import { isDatabaseUnreachableError } from "@/lib/db-errors";
 import { requireRestaurantId } from "@/lib/route-auth";
 import { env } from "@/lib/env";
-import { omnidim } from "@/lib/omnidim";
+import { isOmnidimConfigured } from "@/lib/platform-config";
+import { getOmnidim } from "@/lib/omnidim";
 import { listAgents, upsertAgentMapping } from "@/lib/repositories/agents";
 import { provisionAgentWithIntegrations } from "@/lib/services/agent-provisioning";
 
@@ -23,8 +24,9 @@ export async function GET(req: Request) {
     const local = await listAgents(restaurantId);
 
     let live: unknown = null;
-    if (env.OMNIDIM_API_KEY) {
+    if (await isOmnidimConfigured()) {
       try {
+        const omnidim = await getOmnidim();
         const res = await omnidim.agents.list({ pagesize: 50 });
         live = (res as { bots?: unknown })?.bots ?? res ?? null;
       } catch {
@@ -60,11 +62,11 @@ export async function POST(req: Request) {
     const parsed = createSchema.safeParse(body ?? {});
     if (!parsed.success) return fail("Invalid agent payload", 422, { issues: parsed.error.issues });
 
-    if (!env.OMNIDIM_API_KEY) {
-      return fail("OMNIDIM_API_KEY is not configured", 503);
+    if (!(await isOmnidimConfigured())) {
+      return fail("Voice AI platform is not configured. Contact support.", 503);
     }
 
-    // Forward the full body to Omnidim; it validates its own required fields.
+    const omnidim = await getOmnidim();
     const created = (await omnidim.agents.create((body ?? {}) as never)) as Record<string, unknown>;
     const omnidimAgentId =
       (created?.id as string | number | undefined) ??

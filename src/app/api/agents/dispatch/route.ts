@@ -2,7 +2,8 @@ import { z } from "zod";
 import { ok, fail, readJson } from "@/lib/http";
 import { requireRestaurantId } from "@/lib/route-auth";
 import { env } from "@/lib/env";
-import { omnidim } from "@/lib/omnidim";
+import { isOmnidimConfigured } from "@/lib/platform-config";
+import { getOmnidim } from "@/lib/omnidim";
 import { assertAgentBelongsToRestaurant } from "@/lib/repositories/agents";
 import { upsertCallLog } from "@/lib/repositories/calls";
 
@@ -20,13 +21,14 @@ const schema = z.object({
  * Legacy alias for outbound call dispatch. Prefer POST /api/calls/dispatch.
  */
 export async function POST(req: Request) {
+  const omnidim = await getOmnidim();
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
   const body = await readJson(req);
   const parsed = schema.safeParse(body);
   if (!parsed.success) return fail("agentId and phoneNumber are required", 422, { issues: parsed.error.issues });
 
-  if (!env.OMNIDIM_API_KEY) return fail("OMNIDIM_API_KEY is not configured", 503);
+  if (!(await isOmnidimConfigured())) return fail("Voice AI platform is not configured. Contact support.", 503);
 
   const mapping = await assertAgentBelongsToRestaurant(restaurantId, parsed.data.agentId);
   if (!mapping) return fail("Agent not found for this restaurant", 404);

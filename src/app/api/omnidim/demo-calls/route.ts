@@ -4,7 +4,7 @@ import { requireRestaurantId } from "@/lib/route-auth";
 import { requireOmnidimKey } from "@/lib/omnidim-api";
 import { createOmnidimSession } from "@/lib/omnidim-sessions";
 import { resolveAgentMapping } from "@/lib/repositories/agents";
-import { omnidim } from "@/lib/omnidim";
+import { getOmnidim } from "@/lib/omnidim";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -20,10 +20,11 @@ const DEMO_VARIABLES = {
 
 /** POST /api/omnidim/demo-calls — pre-configured browser demo (no phone number). */
 export async function POST(req: Request) {
+  const omnidim = await getOmnidim();
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
 
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) return key;
 
   const body = await readJson(req);
@@ -45,7 +46,7 @@ export async function POST(req: Request) {
     });
 
     if (!session.ws_url) {
-      return fail("Omnidim did not return a WebSocket URL", 502);
+      return fail("Voice platform did not return a WebSocket URL", 502);
     }
 
     return ok(
@@ -64,10 +65,11 @@ export async function POST(req: Request) {
 
 /** GET /api/omnidim/demo-calls?session_id=&agent_id= — poll for demo call log after session ends. */
 export async function GET(req: Request) {
+  const omnidim = await getOmnidim();
   const restaurantId = await requireRestaurantId(req);
   if (restaurantId instanceof Response) return restaurantId;
 
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) return key;
 
   const { searchParams } = new URL(req.url);

@@ -90,7 +90,7 @@ const NODE_STYLES: Record<
 };
 
 const SERVICE_BADGES = [
-  { name: "Omnidim", color: "purple" as const },
+  { name: "Voice AI Platform", color: "purple" as const },
   { name: "MySQL", color: "green" as const },
   { name: "Stripe", color: "blue" as const },
   { name: "Razorpay", color: "orange" as const },
@@ -111,30 +111,30 @@ const FLOW_DIAGRAMS: Record<
 > = {
   order: {
     title: "Voice order path",
-    caption: "Primary path via Omnidim custom API tools (webhook is backup)",
+    caption: "Primary path via voice agent custom API tools (webhook is backup)",
     direction: "vertical",
     nodes: [
       { id: "caller", label: "Customer call", color: "gray" },
-      { id: "phone", label: "Omnidim phone", color: "purple" },
+      { id: "phone", label: "Voice phone line", color: "purple" },
       { id: "agent", label: "Voice agent (LLM)", color: "purple" },
       {
         id: "menu",
         label: "Read menu",
         color: "blue",
-        api: "GET /api/integrations/omnidim/menu",
+        api: "GET /api/integrations/.../menu",
       },
       {
         id: "order",
         label: "Create order",
         color: "blue",
-        api: "POST /api/integrations/omnidim/create-order",
+        api: "POST /api/integrations/.../create-order",
       },
       { id: "mysql", label: "MySQL orders", color: "green" },
       {
         id: "pay",
         label: "Send payment link",
         color: "blue",
-        api: "POST /api/integrations/omnidim/send-payment-link",
+        api: "POST /api/integrations/.../send-payment-link",
       },
       { id: "notify", label: "Twilio / SendGrid", color: "pink" },
     ],
@@ -160,13 +160,13 @@ const FLOW_DIAGRAMS: Record<
         id: "info",
         label: "Restaurant info",
         color: "blue",
-        api: "GET /api/integrations/omnidim/restaurant",
+        api: "GET /api/integrations/.../restaurant",
       },
       {
         id: "book",
         label: "Create reservation",
         color: "blue",
-        api: "POST /api/integrations/omnidim/create-reservation",
+        api: "POST /api/integrations/.../create-reservation",
       },
       { id: "mysql", label: "MySQL reservations", color: "green" },
       { id: "confirm", label: "Verbal confirmation", color: "gray" },
@@ -181,7 +181,7 @@ const FLOW_DIAGRAMS: Record<
   },
   payment: {
     title: "Payment link delivery",
-    caption: "Triggered by agent tool, dashboard, or Omnidim webhook backup",
+    caption: "Triggered by agent tool, dashboard, or voice webhook backup",
     direction: "vertical",
     nodes: [
       { id: "trigger", label: "Order created", color: "gray" },
@@ -244,7 +244,7 @@ const FLOW_DIAGRAMS: Record<
     nodes: [
       { id: "dash", label: "Dashboard user", color: "gray" },
       { id: "session", label: "Session cookie", color: "blue" },
-      { id: "agent", label: "Omnidim agent call", color: "purple" },
+      { id: "agent", label: "Voice agent call", color: "purple" },
       { id: "key", label: "Integration API key", color: "blue" },
       { id: "resolve", label: "Resolve restaurant_id", color: "green" },
       { id: "mysql", label: "Scoped MySQL queries", color: "green" },
@@ -264,7 +264,7 @@ const FLOW_DIAGRAMS: Record<
     caption: "External services and Cherry Voice API relationships",
     direction: "horizontal",
     nodes: [
-      { id: "omnidim", label: "Omnidim", color: "purple" },
+      { id: "omnidim", label: "Voice AI Platform", color: "purple" },
       { id: "cherry", label: "Cherry Voice API", color: "blue" },
       { id: "mysql", label: "MySQL", color: "green" },
       { id: "gemini", label: "Gemini", color: "yellow" },
@@ -288,20 +288,20 @@ const FLOW_DIAGRAMS: Record<
 
 const FLOW_STEPS: Record<FlowId, string[]> = {
   order: [
-    "Customer dials the restaurant's Omnidim-attached phone number (or uses browser web call).",
-    "Omnidim runs STT → LLM agent with restaurant prompt and six custom API tools.",
-    "Agent calls GET /api/integrations/omnidim/menu to read structured menu from MySQL.",
-    "Agent calls POST /api/integrations/omnidim/create-order with items, phone, order_type.",
+    "Customer dials the restaurant's voice agent phone number (or uses browser web call).",
+    "Cherry Voice AI runs STT → LLM agent with restaurant prompt and six custom API tools.",
+    "Agent calls the menu API to read structured menu from MySQL.",
+    "Agent calls the create-order API with items, phone, order_type.",
     "Cherry Voice API validates integration key, creates order + customer in MySQL.",
-    "Agent optionally calls POST /api/integrations/omnidim/send-payment-link.",
+    "Agent optionally calls the send-payment-link API.",
     "Stripe or Razorpay creates hosted link; Twilio/SendGrid delivers SMS or email.",
-    "Backup: POST /api/webhooks/omnidim can also create orders from post-call events.",
+    "Backup: voice webhooks can also create orders from post-call events.",
   ],
   reservation: [
-    "Same inbound call path through Omnidim voice agent.",
-    "Agent may call GET /api/integrations/omnidim/restaurant for hours and policies.",
+    "Same inbound call path through the voice agent.",
+    "Agent may call the restaurant info API for hours and policies.",
     "Guest provides name, phone, party size, and datetime.",
-    "Agent calls POST /api/integrations/omnidim/create-reservation.",
+    "Agent calls the create-reservation API.",
     "Reservation stored in MySQL with status confirmed; agent confirms verbally.",
     "Dashboard manages reservations via GET/PATCH /api/reservations.",
   ],
@@ -318,46 +318,46 @@ const FLOW_STEPS: Record<FlowId, string[]> = {
     "Step 2 — PATCH /api/settings with restaurant profile, hours, delivery area.",
     "Step 3 — Upload menu via /api/onboarding/menu/upload-* or website snapshot.",
     "Step 4 — POST /api/onboarding/extract runs Gemini → menu_items + agent context.",
-    "Step 5 — Pick voice from /api/omnidim/providers; POST /api/onboarding/agent.",
-    "Step 6 — provisionAgentWithIntegrations creates 6 Omnidim custom API hooks.",
-    "Step 7 — POST /api/omnidim/phone-numbers/attach links inbound number.",
-    "Step 8 — Web call demo via /api/omnidim/web-calls; dashboard go-live.",
+    "Step 5 — Pick voice from available providers; create your voice agent.",
+    "Step 6 — Auto-provision 6 custom API tools for orders, menu, and more.",
+    "Step 7 — Attach an inbound phone number to your agent.",
+    "Step 8 — Web call demo; dashboard go-live.",
   ],
   tenant: [
     "Dashboard APIs use requireRestaurantId() from session cookie — never a default tenant.",
     "Agent→API calls authenticate with per-restaurant integration key (Bearer or X-Restaurant-Key).",
     "restaurant_integration_keys table maps key → restaurant_id.",
-    "omnidim_agents maps omnidim agent id → restaurant_id for webhook resolution.",
+    "agent_agents maps voice agent id → restaurant_id for webhook resolution.",
     "Webhooks resolve tenant from payload agent_id or dialed phone_number.",
     "All domain tables (orders, menu, customers, reservations) include restaurant_id FK.",
   ],
   services: [
-    "Omnidim owns realtime voice: telephony, transcription, LLM, TTS, tool orchestration.",
+    "Cherry Voice AI owns realtime voice: telephony, transcription, LLM, TTS, tool orchestration.",
     "Cherry Voice API is the restaurant domain layer on Next.js + MySQL.",
-    "Gemini fills gaps Omnidim cannot: menu OCR, website scrape, structured extraction.",
+    "Gemini fills gaps for menu OCR, website scrape, and structured extraction.",
     "Payments are per-restaurant gateway config; notifications are per-restaurant Twilio/SendGrid.",
-    "Omnidim KB (PDF only) supplements RAG; structured menu always lives in MySQL.",
+    "Knowledge base PDFs supplement RAG; structured menu always lives in MySQL.",
   ],
 };
 
 const SERVICE_META = [
   {
-    name: "Omnidim",
+    name: "Voice AI Platform",
     color: "purple" as const,
-    role: "Voice AI platform — agents, calls, STT/TTS/LLM, phone numbers, custom API tool calls",
+    role: "Voice AI — agents, calls, STT/TTS/LLM, phone numbers, custom API tool calls",
     usedIn: "Agent create, inbound calls, web sessions, integrations.attach",
   },
   {
     name: "Cherry Voice API",
     color: "blue" as const,
     role: "Next.js REST layer — tenant auth, orders, menu, reservations, webhooks",
-    usedIn: "/api/integrations/omnidim/*, dashboard routes, webhooks",
+    usedIn: "Integration APIs, dashboard routes, webhooks",
   },
   {
     name: "MySQL",
     color: "green" as const,
     role: "Primary datastore — all domain tables scoped by restaurant_id",
-    usedIn: "orders, menu_items, reservations, customers, omnidim_agents mapping",
+    usedIn: "orders, menu_items, reservations, customers, agent mapping",
   },
   {
     name: "Gemini",
@@ -392,12 +392,12 @@ const SERVICE_META = [
 ];
 
 const INTEGRATION_TOOLS = [
-  { tool: "create_order", method: "POST", path: "/api/integrations/omnidim/create-order" },
-  { tool: "get_menu", method: "GET", path: "/api/integrations/omnidim/menu" },
-  { tool: "lookup_customer", method: "GET", path: "/api/integrations/omnidim/customer?phone=" },
-  { tool: "send_payment_link", method: "POST", path: "/api/integrations/omnidim/send-payment-link" },
-  { tool: "create_reservation", method: "POST", path: "/api/integrations/omnidim/create-reservation" },
-  { tool: "get_restaurant_info", method: "GET", path: "/api/integrations/omnidim/restaurant" },
+  { tool: "create_order", method: "POST", path: "/api/integrations/.../create-order" },
+  { tool: "get_menu", method: "GET", path: "/api/integrations/.../menu" },
+  { tool: "lookup_customer", method: "GET", path: "/api/integrations/.../customer?phone=" },
+  { tool: "send_payment_link", method: "POST", path: "/api/integrations/.../send-payment-link" },
+  { tool: "create_reservation", method: "POST", path: "/api/integrations/.../create-reservation" },
+  { tool: "get_restaurant_info", method: "GET", path: "/api/integrations/.../restaurant" },
 ];
 
 const STATS = [
@@ -607,7 +607,7 @@ export function LandingArchitecture({ embedded = false }: LandingArchitecturePro
           How Cherry Voice AI connects everything
         </h2>
         <p className="mt-4 text-muted-foreground">
-          Omnidim handles realtime voice. Cherry Voice API owns menu, orders,
+          Cherry Voice AI handles realtime voice. Cherry Voice API owns menu, orders,
           reservations, payments, and tenant isolation in MySQL.
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
@@ -766,7 +766,7 @@ export function LandingArchitecture({ embedded = false }: LandingArchitecturePro
       <div className="mt-8 overflow-hidden rounded-2xl border border-border/60 bg-card shadow-soft">
         <div className="flex items-center gap-2 border-b border-border/60 px-5 py-4">
           <Key className="h-4 w-4 text-primary" />
-          <h4 className="font-semibold">Omnidim agent integration endpoints</h4>
+          <h4 className="font-semibold">Voice agent integration endpoints</h4>
           <span className="ml-auto rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
             6 tools
           </span>
@@ -821,7 +821,7 @@ export function LandingArchitecture({ embedded = false }: LandingArchitecturePro
             </p>
             <p>
               <span className="font-semibold text-foreground">Webhook path: </span>
-              agent_id or dialed phone → omnidim_agents mapping → reject if tenant unresolved.
+              agent_id or dialed phone → agent mapping → reject if tenant unresolved.
             </p>
           </div>
         </div>

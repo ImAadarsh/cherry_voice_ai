@@ -22,7 +22,7 @@ export function OmnidimSyncButton({
       onClick={async () => {
         try {
           const result = await manualOmnidimSync();
-          toast.success("Synced from Omnidim", {
+          toast.success("Agents synced", {
             description: `${result.agents?.synced ?? 0} agents, ${result.calls?.synced ?? 0} calls`,
           });
           onSynced?.();
@@ -31,7 +31,7 @@ export function OmnidimSyncButton({
         }
       }}
     >
-      <RefreshCw className="h-4 w-4" /> Sync
+      <RefreshCw className="h-4 w-4" /> Sync Agents
     </Button>
   );
 }

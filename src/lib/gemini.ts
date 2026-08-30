@@ -1,10 +1,8 @@
 import "server-only";
+import { getGeminiApiKey, getGeminiModel, isGeminiConfigured as platformGeminiConfigured } from "./platform-config";
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY?.trim() ?? "";
-const GEMINI_MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
-
-export function isGeminiConfigured(): boolean {
-  return GEMINI_API_KEY.length > 0;
+export async function isGeminiConfigured(): Promise<boolean> {
+  return platformGeminiConfigured();
 }
 
 export interface ExtractedMenuItem {
@@ -28,11 +26,13 @@ type GeminiPart =
   | { inline_data: { mime_type: string; data: string } };
 
 async function geminiGenerate(parts: GeminiPart[], jsonMode = true): Promise<string> {
-  if (!isGeminiConfigured()) {
+  const apiKey = await getGeminiApiKey();
+  if (!apiKey) {
     throw new Error("GEMINI_API_KEY is not configured");
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const model = await getGeminiModel();
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

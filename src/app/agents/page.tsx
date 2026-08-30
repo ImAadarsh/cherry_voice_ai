@@ -177,7 +177,7 @@ export default function AgentsPage() {
     <div className="space-y-6">
       <PageHeader
         title="Voice Agents"
-        description="Your Omnidim AI agents, live status and call activity."
+        description="Your voice agents, live status and call activity."
       >
         <div className="flex gap-2">
           <OmnidimSyncButton onSynced={handleSynced} />
@@ -234,7 +234,7 @@ export default function AgentsPage() {
               searchKey="name"
               searchPlaceholder="Search agents…"
               emptyTitle="No agents"
-              emptyDescription="Connect Omnidim to sync your voice agents."
+              emptyDescription="Sync agents to load your voice agents."
               pageSize={10}
               mobileCard={(a) => (
                 <Card className="p-4">

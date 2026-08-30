@@ -1,15 +1,16 @@
 import "server-only";
 import { fail } from "./http";
-import { env } from "./env";
+import { getOmnidimApiKey } from "./platform-config";
 
 const OMNIDIM_BASE = "https://backend.omnidim.io/api/v1";
 
 /** Return 503 when Omnidim is not configured. */
-export function requireOmnidimKey(): string | Response {
-  if (!env.OMNIDIM_API_KEY) {
-    return fail("OMNIDIM_API_KEY is not configured", 503);
+export async function requireOmnidimKey(): Promise<string | Response> {
+  const key = await getOmnidimApiKey();
+  if (!key) {
+    return fail("Voice AI platform is not configured. Contact support.", 503);
   }
-  return env.OMNIDIM_API_KEY;
+  return key;
 }
 
 /** Raw Omnidim HTTP for endpoints not yet in the typed SDK (e.g. simulations). */
@@ -17,7 +18,7 @@ export async function omnidimRawRequest<T>(
   path: string,
   init?: RequestInit & { query?: Record<string, string | number | undefined> },
 ): Promise<T> {
-  const key = requireOmnidimKey();
+  const key = await requireOmnidimKey();
   if (key instanceof Response) throw new Error("OMNIDIM_API_KEY is not configured");
 
   const url = new URL(OMNIDIM_BASE + path);
@@ -39,7 +40,7 @@ export async function omnidimRawRequest<T>(
 
   const json = (await res.json().catch(() => ({}))) as T & { error?: string; message?: string };
   if (!res.ok) {
-    throw new Error(json.error ?? json.message ?? `Omnidim request failed (${res.status})`);
+    throw new Error(json.error ?? json.message ?? `Voice platform request failed (${res.status})`);
   }
   return json;
 }

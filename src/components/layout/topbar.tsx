@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { Command, Search, LogOut, Settings, User } from "lucide-react";
+import { Command, Search, LogOut, Settings, User, Shield } from "lucide-react";
 import Link from "next/link";
 import { navItems } from "@/lib/nav";
 import { Logo } from "@/components/brand/logo";
@@ -21,6 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAuth } from "@/hooks/use-auth";
 import { useCurrency } from "@/hooks/use-currency";
 import { useLogout } from "@/hooks/use-logout";
+import { isSuperAdminRole } from "@/lib/super-admin-auth";
 import { initials } from "@/lib/utils";
 
 export function Topbar({ onOpenSearch }: { onOpenSearch: () => void }) {
@@ -103,6 +104,13 @@ export function Topbar({ onOpenSearch }: { onOpenSearch: () => void }) {
               </span>
             </DropdownMenuLabel>
             <DropdownMenuSeparator />
+            {isSuperAdminRole(user?.role) && (
+              <DropdownMenuItem asChild>
+                <Link href="/super-admin" className="flex items-center gap-2">
+                  <Shield className="h-4 w-4" /> Super Admin
+                </Link>
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem asChild>
               <Link href="/settings" className="flex items-center gap-2">
                 <Settings className="h-4 w-4" /> Settings

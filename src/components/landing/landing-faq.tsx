@@ -12,7 +12,7 @@ const faqs = [
   },
   {
     q: "How quickly can I go live?",
-    a: "Most businesses complete onboarding in under an hour: add your catalog, connect a phone number via Omnidim, and deploy your first agent. AI menu extraction from PDFs speeds up setup significantly.",
+    a: "Most businesses complete onboarding in under an hour: add your catalog, connect a phone number, and deploy your first voice agent. AI menu extraction from PDFs speeds up setup significantly.",
   },
   {
     q: "What payment gateways are supported?",
