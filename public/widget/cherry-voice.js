@@ -126,6 +126,20 @@
     return result;
   }
 
+  function stripWavHeader(bytes) {
+    if (bytes.length < 12 || bytes[0] !== 0x52) return bytes;
+    var offset = 12;
+    while (offset + 8 <= bytes.length) {
+      var id = String.fromCharCode(bytes[offset], bytes[offset + 1], bytes[offset + 2], bytes[offset + 3]);
+      var size = new DataView(bytes.buffer, bytes.byteOffset + offset + 4, 4).getUint32(0, true);
+      if (id === "data") return bytes.subarray(offset + 8, offset + 8 + size);
+      offset += 8 + size;
+    }
+    return bytes.length > 44 ? bytes.subarray(44) : bytes;
+  }
+
+  var activeSources = [];
+
   function ensurePlaybackContext() {
     if (!state.playbackContext) {
       state.playbackContext = new (window.AudioContext || window.webkitAudioContext)({
@@ -133,7 +147,31 @@
       });
       state.nextPlayTime = state.playbackContext.currentTime;
     }
+    if (state.playbackContext.state === "suspended") {
+      state.playbackContext.resume();
+    }
     return state.playbackContext;
+  }
+
+  function stopPlayback() {
+    for (var i = 0; i < activeSources.length; i++) {
+      try {
+        activeSources[i].stop();
+      } catch (e) {}
+    }
+    activeSources = [];
+    if (state.playbackContext) {
+      state.nextPlayTime = state.playbackContext.currentTime;
+    }
+  }
+
+  function sendInterrupt() {
+    if (!state.session || !state.session.control_url) return;
+    fetch(state.session.control_url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "interrupt" }),
+    }).catch(function () {});
   }
 
   function playPcmChunk(base64, sampleRate) {
@@ -142,8 +180,10 @@
     var len = binary.length;
     var bytes = new Uint8Array(len);
     for (var i = 0; i < len; i++) bytes[i] = binary.charCodeAt(i);
+    bytes = stripWavHeader(bytes);
+    if (bytes.length < 2) return;
     var samples = new Float32Array(bytes.length / 2);
-    var view = new DataView(bytes.buffer);
+    var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     for (var j = 0; j < samples.length; j++) {
       samples[j] = view.getInt16(j * 2, true) / 32768;
     }
@@ -155,9 +195,15 @@
     var startAt = Math.max(ctx.currentTime, state.nextPlayTime);
     source.start(startAt);
     state.nextPlayTime = startAt + buffer.duration;
+    activeSources.push(source);
+    source.onended = function () {
+      var idx = activeSources.indexOf(source);
+      if (idx >= 0) activeSources.splice(idx, 1);
+    };
   }
 
   function stopAudioPipeline() {
+    stopPlayback();
     if (state.processor) {
       state.processor.disconnect();
       state.processor.onaudioprocess = null;
@@ -239,17 +285,31 @@
     state.eventSource.addEventListener("state", function (ev) {
       try {
         var data = JSON.parse(ev.data);
+        if (data.interrupted) {
+          stopPlayback();
+          sendInterrupt();
+        }
         if (data.state === "ended") {
           endCallGracefully();
           return;
         }
-        if (data.state) setStatus(data.state.charAt(0).toUpperCase() + data.state.slice(1));
+        if (data.state === "thinking") {
+          setStatus("Thinking…");
+        } else if (data.state === "speaking") {
+          setStatus("Speaking");
+        } else if (data.state) {
+          setStatus(data.state.charAt(0).toUpperCase() + data.state.slice(1));
+        }
       } catch (e) {}
     });
     state.eventSource.addEventListener("transcript", function (ev) {
       try {
         var data = JSON.parse(ev.data);
-        if (data.text) {
+        if (!data.isFinal && data.role === "user") {
+          stopPlayback();
+          sendInterrupt();
+        }
+        if (data.text && data.isFinal) {
           state.transcript = data.text;
           transcriptEl.textContent = data.text;
         }
@@ -306,6 +366,7 @@
   function startMic(session) {
     return navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
       state.mediaStream = stream;
+      ensurePlaybackContext();
       state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
       var source = state.audioContext.createMediaStreamSource(stream);
       state.processor = state.audioContext.createScriptProcessor(4096, 1, 1);

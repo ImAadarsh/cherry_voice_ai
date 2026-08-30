@@ -13,6 +13,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api-client";
+import { PcmPlaybackQueue } from "@/lib/voice/client-audio";
 import { cn } from "@/lib/utils";
 
 type CherryVoiceSession = {
@@ -28,6 +29,8 @@ type TranscriptLine = {
   role: "user" | "agent";
   text: string;
 };
+
+type CallStatus = "idle" | "connecting" | "listening" | "thinking" | "speaking" | "ended";
 
 type CherryVoiceWebCallPanelProps = {
   agentId?: string;
@@ -72,7 +75,7 @@ export function CherryVoiceWebCallPanel({
   className,
   onEnded,
 }: CherryVoiceWebCallPanelProps) {
-  const [status, setStatus] = useState<"idle" | "connecting" | "listening" | "ended">("idle");
+  const [status, setStatus] = useState<CallStatus>("idle");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
@@ -83,33 +86,12 @@ export function CherryVoiceWebCallPanel({
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const processorRef = useRef<ScriptProcessorNode | null>(null);
-  const playbackContextRef = useRef<AudioContext | null>(null);
-  const nextPlayTimeRef = useRef(0);
+  const playbackRef = useRef<PcmPlaybackQueue | null>(null);
   const activeRef = useRef(false);
   const closingRef = useRef(false);
 
-  const playPcmChunk = useCallback((base64: string, sampleRate = 24000) => {
-    if (!playbackContextRef.current) {
-      playbackContextRef.current = new AudioContext({ sampleRate: 24000 });
-      nextPlayTimeRef.current = playbackContextRef.current.currentTime;
-    }
-    const ctx = playbackContextRef.current;
-    const binary = atob(base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const samples = new Float32Array(bytes.length / 2);
-    const view = new DataView(bytes.buffer);
-    for (let j = 0; j < samples.length; j++) {
-      samples[j] = view.getInt16(j * 2, true) / 32768;
-    }
-    const buffer = ctx.createBuffer(1, samples.length, sampleRate);
-    buffer.getChannelData(0).set(samples);
-    const source = ctx.createBufferSource();
-    source.buffer = buffer;
-    source.connect(ctx.destination);
-    const startAt = Math.max(ctx.currentTime, nextPlayTimeRef.current);
-    source.start(startAt);
-    nextPlayTimeRef.current = startAt + buffer.duration;
+  const stopPlayback = useCallback(() => {
+    playbackRef.current?.stop();
   }, []);
 
   const stopAudioPipeline = useCallback(() => {
@@ -126,11 +108,20 @@ export function CherryVoiceWebCallPanel({
       mediaStreamRef.current.getTracks().forEach((t) => t.stop());
       mediaStreamRef.current = null;
     }
-    if (playbackContextRef.current) {
-      void playbackContextRef.current.close();
-      playbackContextRef.current = null;
-      nextPlayTimeRef.current = 0;
+    if (playbackRef.current) {
+      playbackRef.current.destroy();
+      playbackRef.current = null;
     }
+  }, []);
+
+  const sendInterrupt = useCallback(() => {
+    const session = sessionRef.current;
+    if (!session?.control_url) return;
+    void fetch(session.control_url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "interrupt" }),
+    }).catch(() => {});
   }, []);
 
   const endCall = useCallback(() => {
@@ -157,6 +148,21 @@ export function CherryVoiceWebCallPanel({
     onEnded?.();
   }, [onEnded, stopAudioPipeline]);
 
+  const mapServerState = useCallback((state?: string): CallStatus | null => {
+    switch (state) {
+      case "listening":
+        return "listening";
+      case "thinking":
+        return "thinking";
+      case "speaking":
+        return "speaking";
+      case "ended":
+        return "ended";
+      default:
+        return null;
+    }
+  }, []);
+
   const connectEvents = useCallback(
     (session: CherryVoiceSession) => {
       if (eventSourceRef.current) {
@@ -168,15 +174,17 @@ export function CherryVoiceWebCallPanel({
 
       es.addEventListener("state", (ev) => {
         try {
-          const data = JSON.parse(ev.data) as { state?: string };
+          const data = JSON.parse(ev.data) as { state?: string; interrupted?: boolean };
+          if (data.interrupted) {
+            stopPlayback();
+            sendInterrupt();
+          }
           if (data.state === "ended") {
             endCall();
             return;
           }
-          if (data.state) {
-            const label = data.state.charAt(0).toUpperCase() + data.state.slice(1);
-            setStatus(label === "Listening" ? "listening" : "connecting");
-          }
+          const mapped = mapServerState(data.state);
+          if (mapped) setStatus(mapped);
         } catch {
           /* ignore */
         }
@@ -184,12 +192,24 @@ export function CherryVoiceWebCallPanel({
 
       es.addEventListener("transcript", (ev) => {
         try {
-          const data = JSON.parse(ev.data) as { text?: string };
+          const data = JSON.parse(ev.data) as {
+            text?: string;
+            isFinal?: boolean;
+            role?: string;
+          };
           if (!data.text) return;
-          setTranscript((prev) => [
-            ...prev,
-            { id: `user-${Date.now()}`, role: "user", text: data.text! },
-          ]);
+
+          if (!data.isFinal && data.role === "user") {
+            stopPlayback();
+            sendInterrupt();
+          }
+
+          if (data.isFinal && data.role === "user") {
+            setTranscript((prev) => [
+              ...prev,
+              { id: `user-${Date.now()}`, role: "user", text: data.text! },
+            ]);
+          }
         } catch {
           /* ignore */
         }
@@ -213,7 +233,9 @@ export function CherryVoiceWebCallPanel({
       es.addEventListener("audio", (ev) => {
         try {
           const data = JSON.parse(ev.data) as { data?: string; sampleRate?: number };
-          if (data.data) playPcmChunk(data.data, data.sampleRate ?? 24000);
+          if (data.data && playbackRef.current) {
+            void playbackRef.current.playPcmChunk(data.data, data.sampleRate ?? 24000);
+          }
         } catch {
           /* ignore */
         }
@@ -222,8 +244,10 @@ export function CherryVoiceWebCallPanel({
       es.addEventListener("error", (ev: Event) => {
         try {
           const msg = ev as MessageEvent;
-          const data = JSON.parse(msg.data) as { message?: string };
-          setError(data.message ?? "Voice error");
+          const data = JSON.parse(msg.data) as { message?: string; recoverable?: boolean };
+          if (!data.recoverable) {
+            setError(data.message ?? "Voice error");
+          }
         } catch {
           /* ignore */
         }
@@ -236,12 +260,16 @@ export function CherryVoiceWebCallPanel({
         }
       };
     },
-    [endCall, playPcmChunk],
+    [endCall, mapServerState, sendInterrupt, stopPlayback],
   );
 
   const startMic = useCallback(async (session: CherryVoiceSession) => {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     mediaStreamRef.current = stream;
+
+    playbackRef.current = new PcmPlaybackQueue();
+    await playbackRef.current.ensureContext();
+
     const audioContext = new AudioContext();
     audioContextRef.current = audioContext;
     const source = audioContext.createMediaStreamSource(stream);
@@ -300,7 +328,7 @@ export function CherryVoiceWebCallPanel({
     } finally {
       setBusy(false);
     }
-  }, [agentId, busy, connectEvents, endCall, startMic]);
+  }, [agentId, busy, connectEvents, startMic, stopAudioPipeline]);
 
   useEffect(() => {
     return () => {
@@ -311,7 +339,10 @@ export function CherryVoiceWebCallPanel({
     };
   }, [stopAudioPipeline]);
 
-  const isLive = status === "connecting" || status === "listening";
+  const isLive = status === "connecting" || status === "listening" || status === "thinking" || status === "speaking";
+  const isThinking = status === "thinking";
+  const isSpeaking = status === "speaking";
+
   const statusLabel =
     status === "idle"
       ? "Ready"
@@ -319,7 +350,11 @@ export function CherryVoiceWebCallPanel({
         ? "Connecting…"
         : status === "listening"
           ? "Live"
-          : "Ended";
+          : status === "thinking"
+            ? "Thinking…"
+            : status === "speaking"
+              ? "Speaking"
+              : "Ended";
 
   return (
     <div className={cn("space-y-4", className)}>
@@ -329,16 +364,33 @@ export function CherryVoiceWebCallPanel({
             className={cn(
               "relative grid h-12 w-12 place-items-center rounded-full",
               isLive ? "bg-primary/15 text-primary" : "bg-muted text-muted-foreground",
+              isThinking && "animate-pulse bg-amber-500/15 text-amber-600",
+              isSpeaking && "bg-primary/20 text-primary",
             )}
           >
-            <Phone className="h-5 w-5" />
-            {status === "listening" && (
-              <span className="absolute inset-0 animate-ping rounded-full border-2 border-primary/30" />
+            {isThinking ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Phone className="h-5 w-5" />
+            )}
+            {(status === "listening" || isSpeaking) && (
+              <span
+                className={cn(
+                  "absolute inset-0 rounded-full border-2",
+                  isSpeaking ? "animate-pulse border-primary/50" : "animate-ping border-primary/30",
+                )}
+              />
             )}
           </div>
           <div>
             <p className="font-semibold">{agentName ?? "Cherry Voice agent"}</p>
-            <p className="text-xs text-muted-foreground">Browser voice call · Deepgram + Gemini + Inworld</p>
+            <p className="text-xs text-muted-foreground">
+              {isThinking
+                ? "Checking details — hang on a moment…"
+                : isSpeaking
+                  ? "Agent is speaking…"
+                  : "Browser voice call · Deepgram + Gemini + Inworld"}
+            </p>
           </div>
         </div>
         <Badge variant={isLive ? "success" : status === "ended" ? "outline" : "outline"}>

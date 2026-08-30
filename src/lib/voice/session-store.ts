@@ -22,6 +22,8 @@ export interface VoiceSessionRecord {
   pendingUtterance: string;
   isSpeaking: boolean;
   failed: boolean;
+  lastSilencePromptAt: number;
+  silenceTimer: ReturnType<typeof setInterval> | null;
 }
 
 const sessions = new Map<string, VoiceSessionRecord>();
@@ -58,6 +60,8 @@ export function createVoiceSession(input: {
     pendingUtterance: "",
     isSpeaking: false,
     failed: false,
+    lastSilencePromptAt: 0,
+    silenceTimer: null,
   };
   sessions.set(session.id, session);
   return session;

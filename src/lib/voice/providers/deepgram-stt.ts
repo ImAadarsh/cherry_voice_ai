@@ -39,6 +39,7 @@ export function createDeepgramSttProvider(options?: {
         channels: "1",
         interim_results: "true",
         utterance_end_ms: "1000",
+        endpointing: "400",
         vad_events: "true",
         punctuate: "true",
         smart_format: "true",

@@ -55,6 +55,24 @@ export async function logCherryVoiceToolCall(
   }
 }
 
+export async function logCherryVoiceTtsError(
+  session: VoiceSessionRecord,
+  error: string,
+  text?: string,
+): Promise<void> {
+  const entry = {
+    name: "tts_error",
+    args: { text: text?.slice(0, 200) ?? null },
+    result: { error },
+    timestamp: new Date().toISOString(),
+  };
+  session.toolCalls.push(entry);
+
+  if (session.callLogId) {
+    await appendCherryVoiceToolCall(session.callLogId, entry);
+  }
+}
+
 export async function finalizeCherryVoiceCallLog(session: VoiceSessionRecord): Promise<void> {
   if (!session.callLogId) return;
 

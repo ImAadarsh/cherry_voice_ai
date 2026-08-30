@@ -1,6 +1,7 @@
 import "server-only";
 import type { TtsProvider, TtsSynthesisOptions } from "./types";
 import { getCherryVoiceTtsModel, getInworldApiKey } from "../config";
+import { stripWavHeader } from "../wav-utils";
 
 export function createInworldTtsProvider(): TtsProvider {
   return {
@@ -53,14 +54,21 @@ export function createInworldTtsProvider(): TtsProvider {
           try {
             const json = JSON.parse(trimmed) as {
               result?: { audioContent?: string };
+              audioContent?: string;
               error?: { message?: string };
             };
             if (json.error?.message) {
               throw new Error(json.error.message);
             }
-            const audioB64 = json.result?.audioContent;
-            if (audioB64) {
-              options.onAudioChunk?.(Buffer.from(audioB64, "base64"));
+            const audioB64 = json.result?.audioContent ?? json.audioContent;
+            if (!audioB64) continue;
+
+            const raw = Buffer.from(audioB64, "base64");
+            if (raw.length === 0) continue;
+
+            const pcm = stripWavHeader(raw);
+            if (pcm.length > 0) {
+              options.onAudioChunk?.(pcm);
             }
           } catch (err) {
             if (err instanceof SyntaxError) continue;
