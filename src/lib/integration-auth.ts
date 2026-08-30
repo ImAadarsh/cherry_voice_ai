@@ -25,5 +25,10 @@ export async function requireIntegrationRestaurant(req: Request): Promise<number
     return fail("Invalid integration API key", 401);
   }
 
+  const urlRestaurantId = new URL(req.url).searchParams.get("restaurant_id");
+  if (urlRestaurantId && Number(urlRestaurantId) !== restaurantId) {
+    return fail("Restaurant scope mismatch: API key does not match restaurant_id", 403);
+  }
+
   return restaurantId;
 }
