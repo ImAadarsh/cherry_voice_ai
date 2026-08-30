@@ -3,6 +3,7 @@ import { env } from "@/lib/env";
 import { readJson } from "@/lib/http";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { getCherryVoiceSettingsByToken } from "@/lib/repositories/cherry-voice";
+import { resolveRestaurantSttLocale } from "@/lib/voice/deepgram-locale";
 import { isCherryVoiceConfigured } from "@/lib/voice/config";
 import { startVoiceOrchestrator } from "@/lib/voice/orchestrator";
 import { createVoiceSession } from "@/lib/voice/session-store";
@@ -52,10 +53,18 @@ export async function POST(req: Request) {
     return cherryVoiceFail("Voice widget is disabled for this restaurant", 403);
   }
 
+  const sttLocale = await resolveRestaurantSttLocale(settings.restaurantId);
+  const branchLabel = settings.branchId ? `Branch #${settings.branchId}` : null;
+
   const session = createVoiceSession({
     restaurantId: settings.restaurantId,
     voiceId: settings.inworldVoiceId,
     greeting: settings.greeting,
+    processingEarconEnabled: settings.processingEarconEnabled,
+    postCallSmsEnabled: settings.postCallSmsEnabled,
+    branchId: settings.branchId,
+    branchLabel,
+    sttLocale,
   });
 
   try {
@@ -65,6 +74,10 @@ export async function POST(req: Request) {
   }
 
   const baseUrl = env.APP_BASE_URL.replace(/\/$/, "");
+  const edgeBase = env.CHERRY_VOICE_SSE_EDGE_URL?.replace(/\/$/, "");
+  const eventsPath = `/api/cherry-voice/session/${session.id}/events`;
+  const eventsUrl = edgeBase ? `${edgeBase}${eventsPath}` : `${baseUrl}${eventsPath}`;
+
   return cherryVoiceJson(
     {
       ok: true,
@@ -75,9 +88,10 @@ export async function POST(req: Request) {
           name: settings.restaurantName,
           slug: settings.restaurantSlug,
         },
-        events_url: `${baseUrl}/api/cherry-voice/session/${session.id}/events`,
+        events_url: eventsUrl,
         audio_url: `${baseUrl}/api/cherry-voice/session/${session.id}/audio`,
         control_url: `${baseUrl}/api/cherry-voice/session/${session.id}/control`,
+        processing_earcon_enabled: settings.processingEarconEnabled,
       },
     },
     { status: 201 },

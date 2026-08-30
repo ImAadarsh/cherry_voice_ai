@@ -2,12 +2,13 @@ import "server-only";
 import {
   appendCherryVoiceToolCall,
   appendCherryVoiceTranscript,
+  appendCherryVoiceTurnMetric,
   completeCherryVoiceCallLog,
   createCherryVoiceCallLog,
 } from "@/lib/repositories/calls";
+import type { TurnMetricEntry } from "@/lib/repositories/calls";
 import type { VoiceSessionRecord } from "./session-store";
 
-/** Persist call log row for a new Cherry Voice session. */
 export async function initCherryVoiceCallLog(session: VoiceSessionRecord): Promise<void> {
   if (session.callLogId) return;
 
@@ -55,6 +56,16 @@ export async function logCherryVoiceToolCall(
   }
 }
 
+export async function logCherryVoiceTurnMetric(
+  session: VoiceSessionRecord,
+  entry: TurnMetricEntry,
+): Promise<void> {
+  session.turnMetrics.push(entry);
+  if (session.callLogId) {
+    await appendCherryVoiceTurnMetric(session.callLogId, entry);
+  }
+}
+
 export async function logCherryVoiceTtsError(
   session: VoiceSessionRecord,
   error: string,
@@ -73,6 +84,19 @@ export async function logCherryVoiceTtsError(
   }
 }
 
+export async function logCherryVoiceSttError(session: VoiceSessionRecord, error: string): Promise<void> {
+  const entry = {
+    name: "stt_error",
+    args: {},
+    result: { error },
+    timestamp: new Date().toISOString(),
+  };
+  session.toolCalls.push(entry);
+  if (session.callLogId) {
+    await appendCherryVoiceToolCall(session.callLogId, entry);
+  }
+}
+
 export async function finalizeCherryVoiceCallLog(session: VoiceSessionRecord): Promise<void> {
   if (!session.callLogId) return;
 
@@ -84,6 +108,9 @@ export async function finalizeCherryVoiceCallLog(session: VoiceSessionRecord): P
       session_id: session.id,
       order_id: session.orderId,
       message_count: session.messages.length,
+      turn_metrics_count: session.turnMetrics.length,
+      barge_in_count: session.bargeInCount,
+      personality_preset: session.personalityPreset,
     },
   });
 }

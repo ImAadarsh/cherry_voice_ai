@@ -78,6 +78,8 @@ export interface MenuCategory {
 
 export type AgentStatus = "online" | "idle" | "offline";
 
+export type PersonalityPreset = "warm" | "professional" | "casual";
+
 export type VoiceAgentType = "native" | "platform";
 
 export interface VoiceAgent {
@@ -102,6 +104,7 @@ export interface VoiceAgent {
   greeting?: string;
   accentColor?: string;
   widgetPosition?: "bottom-right" | "bottom-left";
+  personalityPreset?: PersonalityPreset;
 }
 
 export type CallOutcome =

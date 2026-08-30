@@ -20,6 +20,8 @@ const patchSchema = z.object({
   widget_position: z.enum(["bottom-right", "bottom-left"]).optional(),
   accent_color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   is_enabled: z.boolean().optional(),
+  processing_earcon_enabled: z.boolean().optional(),
+  post_call_sms_enabled: z.boolean().optional(),
 });
 
 /** GET /api/settings/cherry-voice */
@@ -63,6 +65,8 @@ export async function PATCH(req: Request) {
     widgetPosition: parsed.data.widget_position,
     accentColor: parsed.data.accent_color,
     isEnabled: parsed.data.is_enabled,
+    processingEarconEnabled: parsed.data.processing_earcon_enabled,
+    postCallSmsEnabled: parsed.data.post_call_sms_enabled,
   });
 
   return ok({ settings: updated });

@@ -10,6 +10,7 @@ export interface SttTranscriptEvent {
   text: string;
   isFinal: boolean;
   speechStarted?: boolean;
+  confidence?: number | null;
 }
 
 export interface SttProvider {
@@ -17,6 +18,7 @@ export interface SttProvider {
   sendAudio(chunk: Buffer): void;
   onTranscript(handler: (event: SttTranscriptEvent) => void): void;
   onError(handler: (error: Error) => void): void;
+  onDisconnect?(handler: () => void): void;
   close(): void;
 }
 
@@ -24,7 +26,9 @@ export interface TtsSynthesisOptions {
   voiceId: string;
   text: string;
   signal?: AbortSignal;
+  modelId?: string;
   onAudioChunk?: (pcm: Buffer) => void;
+  onFirstChunk?: () => void;
 }
 
 export interface TtsProvider {
@@ -41,9 +45,7 @@ export interface LlmMessage {
 export interface LlmToolCall {
   name: string;
   args: Record<string, unknown>;
-  /** Gemini 3 requires replaying thoughtSignature on functionCall parts in history. */
   thoughtSignature?: string;
-  /** Optional function call id from Gemini for mapping functionResponse. */
   id?: string;
 }
 
@@ -55,13 +57,17 @@ export interface LlmTurnResult {
 export interface LlmProvider {
   chat(
     messages: LlmMessage[],
-    options?: { systemPrompt?: string; signal?: AbortSignal },
+    options?: { systemPrompt?: string; signal?: AbortSignal; flash?: boolean },
   ): Promise<LlmTurnResult>;
   continueWithToolResults(
     messages: LlmMessage[],
     toolResults: Array<{ name: string; result: unknown }>,
     options?: { systemPrompt?: string; signal?: AbortSignal },
   ): Promise<LlmTurnResult>;
+  chatStream(
+    messages: LlmMessage[],
+    options?: { systemPrompt?: string; signal?: AbortSignal },
+  ): AsyncGenerator<string, LlmTurnResult, undefined>;
 }
 
 export interface VoiceSessionEvent {
@@ -71,6 +77,11 @@ export interface VoiceSessionEvent {
     | "assistant_text"
     | "audio"
     | "error"
-    | "greeting";
+    | "greeting"
+    | "text_only_mode"
+    | "tts_fallback"
+    | "tool_start"
+    | "network_warning"
+    | "duration_warning";
   payload: Record<string, unknown>;
 }

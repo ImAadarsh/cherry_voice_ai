@@ -143,7 +143,7 @@ Prioritized features to make Cherry Voice native agents faster, more responsive,
 | Caller ID lookup (#50) | **Shipped** — `callerPhone` session field |
 | Payment link confirmation | **Shipped** — prompt + tool response |
 | Order readback | **Shipped** — prompt rules |
-| Remaining P2 items | Roadmap |
+| Remaining P2 items | **Shipped** — see P2 table below |
 
 ### P2 (shipped Aug 2026)
 

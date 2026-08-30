@@ -61,6 +61,7 @@ const createSchema = z
     widget_position: z.enum(["bottom-right", "bottom-left"]).optional(),
     accent_color: z.string().optional(),
     is_enabled: z.boolean().optional(),
+    personality_preset: z.enum(["warm", "professional", "casual"]).optional(),
   })
   .passthrough();
 
@@ -131,6 +132,7 @@ export async function POST(req: Request) {
         accentColor: parsed.data.accent_color,
         isEnabled: parsed.data.is_enabled,
         isPrimary: existingAgents.length === 0,
+        personalityPreset: parsed.data.personality_preset,
       });
 
       return ok(

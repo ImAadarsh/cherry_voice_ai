@@ -12,6 +12,9 @@ export interface CherryVoiceSettingsRow extends RowDataPacket {
   widget_position: "bottom-right" | "bottom-left";
   accent_color: string;
   is_enabled: number;
+  processing_earcon_enabled?: number;
+  post_call_sms_enabled?: number;
+  branch_id?: number | null;
   config: string | null;
 }
 
@@ -26,6 +29,9 @@ export interface CherryVoicePublicConfig {
   widgetPosition: "bottom-right" | "bottom-left";
   accentColor: string;
   isEnabled: boolean;
+  processingEarconEnabled: boolean;
+  postCallSmsEnabled: boolean;
+  branchId: number | null;
 }
 
 function generateWidgetToken(): string {
@@ -41,7 +47,11 @@ function parseConfig(raw: string | null): Record<string, unknown> {
   }
 }
 
-function mapRow(row: CherryVoiceSettingsRow, restaurantName: string, restaurantSlug: string): CherryVoicePublicConfig {
+function mapRow(
+  row: CherryVoiceSettingsRow,
+  restaurantName: string,
+  restaurantSlug: string,
+): CherryVoicePublicConfig {
   return {
     restaurantId: row.restaurant_id,
     restaurantName,
@@ -53,6 +63,9 @@ function mapRow(row: CherryVoiceSettingsRow, restaurantName: string, restaurantS
     widgetPosition: row.widget_position,
     accentColor: row.accent_color,
     isEnabled: Boolean(row.is_enabled),
+    processingEarconEnabled: Boolean(row.processing_earcon_enabled),
+    postCallSmsEnabled: Boolean(row.post_call_sms_enabled),
+    branchId: row.branch_id ?? null,
   };
 }
 
@@ -131,6 +144,9 @@ export async function updateCherryVoiceSettings(
     widgetPosition: "bottom-right" | "bottom-left";
     accentColor: string;
     isEnabled: boolean;
+    processingEarconEnabled: boolean;
+    postCallSmsEnabled: boolean;
+    branchId: number | null;
     config: Record<string, unknown>;
   }>,
 ): Promise<CherryVoicePublicConfig> {
@@ -162,6 +178,18 @@ export async function updateCherryVoiceSettings(
   if (patch.isEnabled !== undefined) {
     sets.push("is_enabled = ?");
     params.push(patch.isEnabled ? 1 : 0);
+  }
+  if (patch.processingEarconEnabled !== undefined) {
+    sets.push("processing_earcon_enabled = ?");
+    params.push(patch.processingEarconEnabled ? 1 : 0);
+  }
+  if (patch.postCallSmsEnabled !== undefined) {
+    sets.push("post_call_sms_enabled = ?");
+    params.push(patch.postCallSmsEnabled ? 1 : 0);
+  }
+  if (patch.branchId !== undefined) {
+    sets.push("branch_id = ?");
+    params.push(patch.branchId);
   }
   if (patch.config !== undefined) {
     sets.push("config = ?");

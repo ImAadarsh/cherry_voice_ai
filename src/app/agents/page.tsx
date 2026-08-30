@@ -28,6 +28,7 @@ import { AgentWizardDialog } from "@/components/agents/agent-wizard-dialog";
 import { CallDetailDrawer } from "@/components/calls/call-detail-drawer";
 import { WebCallDialog } from "@/components/omnidim/web-call-dialog";
 import { CherryVoiceWebCallDialog } from "@/components/cherry-voice/web-call-dialog";
+import { LiveSessionsPanel } from "@/components/cherry-voice/live-sessions-panel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -101,6 +102,7 @@ export default function AgentsPage() {
   const [webCallFor, setWebCallFor] = useState<VoiceAgent | null>(null);
   const [demoCallFor, setDemoCallFor] = useState<VoiceAgent | null>(null);
   const [cherryWebCallFor, setCherryWebCallFor] = useState<VoiceAgent | null>(null);
+  const [voiceErrors, setVoiceErrors] = useState<{ tts_errors: number; stt_errors: number; period_days: number } | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editAgent, setEditAgent] = useState<VoiceAgent | null>(null);
   const [deleteAgent, setDeleteAgent] = useState<VoiceAgent | null>(null);
@@ -114,6 +116,13 @@ export default function AgentsPage() {
 
   const nativeCount = agents.filter((a) => a.agentType === "native").length;
   const platformCount = agents.filter((a) => a.agentType === "platform").length;
+  useEffect(() => {
+    api
+      .get<{ tts_errors: number; stt_errors: number; period_days: number }>("/api/cherry-voice/voice-errors")
+      .then(setVoiceErrors)
+      .catch(() => {});
+  }, []);
+
   const embedScript = data?.cherry_voice?.embed_script;
 
   const handleDelete = async () => {
@@ -276,6 +285,20 @@ export default function AgentsPage() {
           )}
         </div>
       </PageHeader>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <LiveSessionsPanel />
+        {voiceErrors && (
+          <div className="rounded-xl border bg-card p-4 text-sm">
+            <p className="font-medium">Cherry Voice errors (last {voiceErrors.period_days} days)</p>
+            <p className="mt-2 text-muted-foreground">
+              TTS failures: <span className="font-mono text-foreground">{voiceErrors.tts_errors}</span>
+              {" · "}
+              STT issues: <span className="font-mono text-foreground">{voiceErrors.stt_errors}</span>
+            </p>
+          </div>
+        )}
+      </div>
 
       {nativeCount === 0 && !loading && (
         <Card className="border-primary/20 bg-primary/5">

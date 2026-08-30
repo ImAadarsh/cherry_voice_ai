@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api-client";
 import { PcmPlaybackQueue } from "@/lib/voice/client-audio";
+import { playProcessingEarcon, startWorkletMicCapture } from "@/lib/voice/client-mic-capture";
 import { cn } from "@/lib/utils";
 
 type CherryVoiceSession = {
@@ -21,6 +22,7 @@ type CherryVoiceSession = {
   events_url: string;
   audio_url: string;
   control_url: string;
+  processing_earcon_enabled?: boolean;
   restaurant?: { name?: string };
 };
 
@@ -39,35 +41,8 @@ type CherryVoiceWebCallPanelProps = {
   onEnded?: () => void;
 };
 
-function floatTo16BitPCM(float32: Float32Array): ArrayBuffer {
-  const buffer = new ArrayBuffer(float32.length * 2);
-  const view = new DataView(buffer);
-  for (let i = 0; i < float32.length; i++) {
-    const s = Math.max(-1, Math.min(1, float32[i]));
-    view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-  }
-  return buffer;
-}
-
-function downsample(buffer: Float32Array, inputRate: number, outputRate: number): Float32Array {
-  if (outputRate === inputRate) return buffer;
-  const ratio = inputRate / outputRate;
-  const newLength = Math.round(buffer.length / ratio);
-  const result = new Float32Array(newLength);
-  let offset = 0;
-  for (let i = 0; i < newLength; i++) {
-    const nextOffset = Math.round((i + 1) * ratio);
-    let sum = 0;
-    let count = 0;
-    for (let j = offset; j < nextOffset && j < buffer.length; j++) {
-      sum += buffer[j];
-      count++;
-    }
-    result[i] = count ? sum / count : 0;
-    offset = nextOffset;
-  }
-  return result;
-}
+const NETWORK_FAIL_THRESHOLD = 5;
+const WORKLET_URL = "/worklets/pcm-capture-processor.js";
 
 export function CherryVoiceWebCallPanel({
   agentId,
@@ -80,38 +55,30 @@ export function CherryVoiceWebCallPanel({
   const [error, setError] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
   const [assistantText, setAssistantText] = useState("");
+  const [textOnlyMode, setTextOnlyMode] = useState(false);
+  const [networkWarning, setNetworkWarning] = useState<string | null>(null);
 
   const sessionRef = useRef<CherryVoiceSession | null>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const processorRef = useRef<ScriptProcessorNode | null>(null);
+  const micHandleRef = useRef<{ stop: () => void } | null>(null);
   const playbackRef = useRef<PcmPlaybackQueue | null>(null);
   const activeRef = useRef(false);
   const closingRef = useRef(false);
+  const audioFailCountRef = useRef(0);
+  const earconEnabledRef = useRef(false);
 
   const stopPlayback = useCallback(() => {
     playbackRef.current?.stop();
   }, []);
 
   const stopAudioPipeline = useCallback(() => {
-    if (processorRef.current) {
-      processorRef.current.disconnect();
-      processorRef.current.onaudioprocess = null;
-      processorRef.current = null;
-    }
-    if (audioContextRef.current) {
-      void audioContextRef.current.close();
-      audioContextRef.current = null;
-    }
-    if (mediaStreamRef.current) {
-      mediaStreamRef.current.getTracks().forEach((t) => t.stop());
-      mediaStreamRef.current = null;
-    }
+    micHandleRef.current?.stop();
+    micHandleRef.current = null;
     if (playbackRef.current) {
       playbackRef.current.destroy();
       playbackRef.current = null;
     }
+    audioFailCountRef.current = 0;
   }, []);
 
   const sendInterrupt = useCallback(() => {
@@ -241,6 +208,62 @@ export function CherryVoiceWebCallPanel({
         }
       });
 
+      es.addEventListener("tool_start", () => {
+        if (earconEnabledRef.current) playProcessingEarcon();
+      });
+
+      es.addEventListener("text_only_mode", (ev) => {
+        try {
+          const data = JSON.parse(ev.data) as { message?: string };
+          setTextOnlyMode(true);
+          if (data.message) setNetworkWarning(data.message);
+        } catch {
+          setTextOnlyMode(true);
+        }
+      });
+
+      es.addEventListener("network_warning", (ev) => {
+        try {
+          const data = JSON.parse(ev.data) as { message?: string };
+          setNetworkWarning(data.message ?? "Poor connection — try ending and calling back.");
+        } catch {
+          setNetworkWarning("Poor connection detected.");
+        }
+      });
+
+      es.addEventListener("duration_warning", (ev) => {
+        try {
+          const data = JSON.parse(ev.data) as { message?: string };
+          if (data.message) toast.message(data.message);
+        } catch {
+          /* ignore */
+        }
+      });
+
+
+      es.addEventListener("tts_fallback", (ev) => {
+        try {
+          const data = JSON.parse((ev as MessageEvent).data) as { text?: string; useWebSpeech?: boolean };
+          const line = data.text?.trim();
+          if (!line || !data.useWebSpeech || typeof window === "undefined") return;
+          const utter = new SpeechSynthesisUtterance(line);
+          utter.rate = 1;
+          window.speechSynthesis.cancel();
+          window.speechSynthesis.speak(utter);
+        } catch {
+          /* ignore */
+        }
+      });
+
+      es.addEventListener("text_only_mode", (ev) => {
+        try {
+          const data = JSON.parse((ev as MessageEvent).data) as { message?: string };
+          if (data.message) setError(data.message);
+        } catch {
+          /* ignore */
+        }
+      });
+
       es.addEventListener("error", (ev: Event) => {
         try {
           const msg = ev as MessageEvent;
@@ -264,32 +287,23 @@ export function CherryVoiceWebCallPanel({
   );
 
   const startMic = useCallback(async (session: CherryVoiceSession) => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    mediaStreamRef.current = stream;
-
     playbackRef.current = new PcmPlaybackQueue();
     await playbackRef.current.ensureContext();
 
-    const audioContext = new AudioContext();
-    audioContextRef.current = audioContext;
-    const source = audioContext.createMediaStreamSource(stream);
-    const processor = audioContext.createScriptProcessor(4096, 1, 1);
-    processorRef.current = processor;
-
-    processor.onaudioprocess = (e) => {
-      if (!activeRef.current || !session.audio_url) return;
-      const input = e.inputBuffer.getChannelData(0);
-      const down = downsample(input, audioContext.sampleRate, 16000);
-      const pcm = floatTo16BitPCM(down);
-      void fetch(session.audio_url, {
-        method: "POST",
-        headers: { "Content-Type": "application/octet-stream" },
-        body: pcm,
-      }).catch(() => {});
-    };
-
-    source.connect(processor);
-    processor.connect(audioContext.destination);
+    const { handle } = await startWorkletMicCapture({
+      audioUrl: session.audio_url,
+      workletUrl: WORKLET_URL,
+      isActive: () => activeRef.current,
+      onUploadFailure: () => {
+        audioFailCountRef.current += 1;
+        if (audioFailCountRef.current >= NETWORK_FAIL_THRESHOLD) {
+          setNetworkWarning(
+            "We're having trouble hearing you — check your connection or try again later.",
+          );
+        }
+      },
+    });
+    micHandleRef.current = handle;
   }, []);
 
   const startCall = useCallback(async () => {
@@ -298,6 +312,8 @@ export function CherryVoiceWebCallPanel({
     setError(null);
     setTranscript([]);
     setAssistantText("");
+    setTextOnlyMode(false);
+    setNetworkWarning(null);
     setStatus("connecting");
     closingRef.current = false;
 
@@ -307,6 +323,7 @@ export function CherryVoiceWebCallPanel({
       });
 
       sessionRef.current = data;
+      earconEnabledRef.current = Boolean(data.processing_earcon_enabled);
       activeRef.current = true;
       connectEvents(data);
       await startMic(data);
@@ -405,7 +422,20 @@ export function CherryVoiceWebCallPanel({
         </div>
       )}
 
-      <div className="min-h-[200px] space-y-2 rounded-xl border bg-card p-4">
+      {networkWarning && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-900 dark:text-amber-100">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>{networkWarning}</span>
+        </div>
+      )}
+
+      {textOnlyMode && (
+        <div className="rounded-lg border-2 border-primary bg-primary/10 p-3 text-center text-sm font-medium">
+          Audio unavailable — read the live transcript below.
+        </div>
+      )}
+
+      <div className={cn("min-h-[200px] space-y-2 rounded-xl border bg-card p-4", textOnlyMode && "ring-2 ring-primary")}>
         <div className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
           <MessageSquare className="h-4 w-4" /> Transcript
         </div>

@@ -12,6 +12,13 @@ import type {
   VoiceAgent,
 } from "@/types";
 
+import type { PersonalityPreset } from "@/types";
+
+function normalizePersonalityPreset(value: unknown): PersonalityPreset {
+  const s = String(value ?? "warm").toLowerCase();
+  return s === "professional" || s === "casual" ? s : "warm";
+}
+
 const AVATAR_COLORS = ["#DC2626", "#2563EB", "#16A34A", "#D97706", "#9333EA", "#0891B2"];
 
 function colorForId(id: string | number): string {
@@ -182,6 +189,9 @@ export function mapAgentRow(row: Record<string, unknown>): VoiceAgent {
     greeting: widgetConfig.welcome_message ? String(widgetConfig.welcome_message) : undefined,
     accentColor: widgetConfig.accent_color ? String(widgetConfig.accent_color) : undefined,
     widgetPosition: widgetConfig.widget_position,
+    personalityPreset: normalizePersonalityPreset(
+      (config as { personality_preset?: unknown }).personality_preset,
+    ),
   };
 }
 

@@ -35,6 +35,8 @@ const schema = z.object({
   CHERRY_VOICE_GEMINI_MODEL: z.string().optional().default("gemini-3.5-flash-lite"),
   CHERRY_VOICE_STT_MODEL: z.string().optional().default("nova-3"),
   CHERRY_VOICE_TTS_MODEL: z.string().optional().default("inworld-tts-2-flash"),
+  /** Optional edge proxy base URL for SSE events (see docs/CHERRY_VOICE_AGENT.md). */
+  CHERRY_VOICE_SSE_EDGE_URL: z.string().url().optional().or(z.literal("")).default(""),
 
   // Stripe
   STRIPE_SECRET_KEY: z.string().optional().default(""),

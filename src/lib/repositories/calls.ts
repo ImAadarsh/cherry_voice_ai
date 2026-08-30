@@ -10,6 +10,21 @@ export type TranscriptEntry = {
   timestamp: string;
 };
 
+export type TurnMetricEntry = {
+  turn: number;
+  stt_ms: number;
+  llm_ms: number;
+  tool_ms: number;
+  tts_ttfa_ms: number;
+  total_ms: number;
+  timestamp: string;
+  zero_audio_chunks?: boolean;
+  barge_in?: boolean;
+  stt_confidence?: number | null;
+  user_text?: string;
+  agent_text?: string;
+};
+
 export type ToolCallEntry = {
   name: string;
   args: unknown;
@@ -160,6 +175,23 @@ export async function appendCherryVoiceToolCall(
   );
 }
 
+export async function appendCherryVoiceTurnMetric(
+  callLogId: number,
+  entry: TurnMetricEntry,
+): Promise<void> {
+  const row = await queryOne<{ turn_metrics: unknown } & RowDataPacket>(
+    "SELECT turn_metrics FROM call_logs WHERE id = ? LIMIT 1",
+    [callLogId],
+  );
+  if (!row) return;
+  const entries = parseJsonArray<TurnMetricEntry>(row.turn_metrics);
+  entries.push(entry);
+  await pool.query(
+    "UPDATE call_logs SET turn_metrics = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+    [JSON.stringify(entries), callLogId],
+  );
+}
+
 export async function completeCherryVoiceCallLog(
   callLogId: number,
   input: {
@@ -223,4 +255,69 @@ export async function listCalls(restaurantId: number, limit = 50) {
       LIMIT ?`,
     [restaurantId, limit],
   );
+}
+
+export async function getCherryVoiceErrorStats(restaurantId: number, days = 7) {
+  const rows = await query<{ tool_calls: unknown } & RowDataPacket>(
+    `SELECT tool_calls FROM call_logs
+      WHERE restaurant_id = ? AND source = 'cherry_voice'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`,
+    [restaurantId, days],
+  );
+  let tts_errors = 0;
+  let stt_errors = 0;
+  for (const row of rows) {
+    for (const entry of parseJsonArray<ToolCallEntry>(row.tool_calls)) {
+      if (entry.name === "tts_error") tts_errors += 1;
+      if (entry.name === "stt_error") stt_errors += 1;
+    }
+  }
+  return { tts_errors, stt_errors, period_days: days };
+}
+
+export async function getCherryVoiceAnalytics(restaurantId: number, days = 7) {
+  const rows = await query<
+    { tool_calls: unknown; turn_metrics: unknown; raw_payload: unknown } & RowDataPacket
+  >(
+    `SELECT tool_calls, turn_metrics, raw_payload FROM call_logs
+      WHERE restaurant_id = ? AND source = 'cherry_voice'
+        AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)`,
+    [restaurantId, days],
+  );
+
+  const toolStats: Record<string, { success: number; failure: number }> = {};
+  let bargeInTotal = 0;
+  let zeroAudioTurns = 0;
+  let turnCount = 0;
+
+  for (const row of rows) {
+    const raw =
+      row.raw_payload && typeof row.raw_payload === "object"
+        ? (row.raw_payload as Record<string, unknown>)
+        : {};
+    bargeInTotal += Number(raw.barge_in_count ?? 0);
+
+    for (const entry of parseJsonArray<ToolCallEntry>(row.tool_calls)) {
+      if (entry.name === "tts_error" || entry.name === "stt_error") continue;
+      const bucket = toolStats[entry.name] ?? { success: 0, failure: 0 };
+      const result = entry.result as { ok?: boolean; error?: string } | null;
+      if (result && typeof result === "object" && result.ok === false) bucket.failure += 1;
+      else bucket.success += 1;
+      toolStats[entry.name] = bucket;
+    }
+
+    for (const metric of parseJsonArray<TurnMetricEntry>(row.turn_metrics)) {
+      turnCount += 1;
+      if (metric.zero_audio_chunks) zeroAudioTurns += 1;
+    }
+  }
+
+  return {
+    period_days: days,
+    call_count: rows.length,
+    barge_in_total: bargeInTotal,
+    zero_audio_turns: zeroAudioTurns,
+    turn_count: turnCount,
+    tools: toolStats,
+  };
 }

@@ -9,12 +9,16 @@ import {
 import { updateAgentContext } from "@/lib/repositories/onboarding";
 import { generateAgentPrompt } from "@/lib/services/onboarding-extract";
 
+import type { PersonalityPreset } from "@/types";
+import { normalizePersonalityPreset } from "@/lib/voice/personality";
+
 export type NativeAgentConfig = {
   prompt?: string;
   welcome_message?: string;
   widget_position?: "bottom-right" | "bottom-left";
   accent_color?: string;
   is_enabled?: boolean;
+  personality_preset?: PersonalityPreset;
 };
 
 function generateNativeAgentId(): string {
@@ -41,6 +45,7 @@ export async function createNativeAgent(input: {
   accentColor?: string;
   isEnabled?: boolean;
   isPrimary?: boolean;
+  personalityPreset?: PersonalityPreset;
 }) {
   const existingAgents = await listAgents(input.restaurantId);
   const prompt =
@@ -56,6 +61,7 @@ export async function createNativeAgent(input: {
     accent_color: input.accentColor ?? "#e11d48",
     is_enabled: input.isEnabled ?? true,
     is_primary: input.isPrimary ?? existingAgents.length === 0,
+    personality_preset: normalizePersonalityPreset(input.personalityPreset),
   };
 
   const localId = await upsertAgentMapping({
@@ -98,6 +104,7 @@ export async function updateNativeAgent(
     accentColor?: string;
     isEnabled?: boolean;
     isPrimary?: boolean;
+    personalityPreset?: PersonalityPreset;
   },
 ) {
   const agents = await listAgents(restaurantId);
@@ -119,6 +126,9 @@ export async function updateNativeAgent(
   if (input.accentColor !== undefined) existingConfig.accent_color = input.accentColor;
   if (input.isEnabled !== undefined) existingConfig.is_enabled = input.isEnabled;
   if (input.isPrimary !== undefined) existingConfig.is_primary = input.isPrimary;
+  if (input.personalityPreset !== undefined) {
+    existingConfig.personality_preset = normalizePersonalityPreset(input.personalityPreset);
+  }
 
   await updateAgentMapping(restaurantId, localId, {
     name: input.name,

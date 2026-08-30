@@ -30,6 +30,8 @@ export default function CherryVoiceSettingsPage() {
       widgetPosition: "bottom-right" | "bottom-left";
       accentColor: string;
       isEnabled: boolean;
+      processingEarconEnabled: boolean;
+      postCallSmsEnabled: boolean;
       restaurantName: string;
       restaurantSlug: string;
     };
@@ -105,6 +107,32 @@ export default function CherryVoiceSettingsPage() {
             <Switch
               checked={settings.isEnabled}
               onCheckedChange={(checked) => save({ is_enabled: checked })}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Processing earcon</p>
+              <p className="text-xs text-muted-foreground">
+                Subtle chime when the agent runs a tool (off by default)
+              </p>
+            </div>
+            <Switch
+              checked={settings.processingEarconEnabled}
+              onCheckedChange={(checked) => save({ processing_earcon_enabled: checked })}
+            />
+          </div>
+
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm font-medium">Post-call order SMS</p>
+              <p className="text-xs text-muted-foreground">
+                Text order summary when a web call ends with an order placed
+              </p>
+            </div>
+            <Switch
+              checked={settings.postCallSmsEnabled}
+              onCheckedChange={(checked) => save({ post_call_sms_enabled: checked })}
             />
           </div>
 

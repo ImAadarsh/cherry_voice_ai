@@ -6,9 +6,11 @@ import { listAgents } from "@/lib/repositories/agents";
 import { getCherryVoiceSettingsByRestaurant } from "@/lib/repositories/cherry-voice";
 import { env } from "@/lib/env";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
+import { resolveRestaurantSttLocale } from "@/lib/voice/deepgram-locale";
 import { isCherryVoiceConfigured } from "@/lib/voice/config";
 import { startVoiceOrchestrator } from "@/lib/voice/orchestrator";
 import { createVoiceSession } from "@/lib/voice/session-store";
+import { normalizePersonalityPreset } from "@/lib/voice/personality";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -40,6 +42,7 @@ export async function POST(req: Request) {
     let voiceId = settings.inworldVoiceId;
     let greeting = settings.greeting;
     let agentDbId: number | null = null;
+    let personalityPreset = normalizePersonalityPreset("warm");
 
     if (parsed.success && parsed.data.agent_id) {
       const agents = await listAgents(restaurantId);
@@ -56,14 +59,23 @@ export async function POST(req: Request) {
         if (typeof config.welcome_message === "string" && config.welcome_message.trim()) {
           greeting = config.welcome_message.trim();
         }
+        personalityPreset = normalizePersonalityPreset(config.personality_preset);
       }
     }
+
+    const sttLocale = await resolveRestaurantSttLocale(settings.restaurantId);
+    const branchLabel = settings.branchId ? `Branch #${settings.branchId}` : null;
 
     const session = createVoiceSession({
       restaurantId: settings.restaurantId,
       voiceId,
       greeting,
       agentId: agentDbId,
+      processingEarconEnabled: settings.processingEarconEnabled,
+      postCallSmsEnabled: settings.postCallSmsEnabled,
+      branchId: settings.branchId,
+      branchLabel,
+      sttLocale,
     });
 
     try {
@@ -73,6 +85,10 @@ export async function POST(req: Request) {
     }
 
     const baseUrl = env.APP_BASE_URL.replace(/\/$/, "");
+    const edgeBase = env.CHERRY_VOICE_SSE_EDGE_URL?.replace(/\/$/, "");
+    const eventsPath = `/api/cherry-voice/session/${session.id}/events`;
+    const eventsUrl = edgeBase ? `${edgeBase}${eventsPath}` : `${baseUrl}${eventsPath}`;
+
     return ok(
       {
         session_id: session.id,
@@ -81,9 +97,10 @@ export async function POST(req: Request) {
           name: settings.restaurantName,
           slug: settings.restaurantSlug,
         },
-        events_url: `${baseUrl}/api/cherry-voice/session/${session.id}/events`,
+        events_url: eventsUrl,
         audio_url: `${baseUrl}/api/cherry-voice/session/${session.id}/audio`,
         control_url: `${baseUrl}/api/cherry-voice/session/${session.id}/control`,
+        processing_earcon_enabled: settings.processingEarconEnabled,
       },
       { status: 201 },
     );

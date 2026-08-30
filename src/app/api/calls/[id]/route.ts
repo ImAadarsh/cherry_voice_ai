@@ -34,6 +34,18 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
         row.transcript_json,
       );
       const toolCalls = parseJsonArray<Record<string, unknown>>(row.tool_calls);
+      const turnMetrics = parseJsonArray<{
+        turn: number;
+        stt_ms: number;
+        llm_ms: number;
+        tool_ms: number;
+        tts_ttfa_ms: number;
+        total_ms: number;
+        timestamp: string;
+        zero_audio_chunks?: boolean;
+        user_text?: string;
+        agent_text?: string;
+      }>(row.turn_metrics);
       const transcriptText =
         typeof row.transcript === "string" && row.transcript.trim()
           ? row.transcript
@@ -53,6 +65,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
           transcript: transcriptText,
           transcript_json: transcriptJson,
           tool_calls: toolCalls,
+          turn_metrics: turnMetrics,
           bot_name: row.agent_name ?? "Cherry Voice",
           created_at: row.started_at ?? row.created_at,
           recording_url: row.recording_url,

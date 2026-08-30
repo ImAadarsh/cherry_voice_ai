@@ -151,6 +151,30 @@ async function runGenerate(
   };
 }
 
+
+
+async function* streamGenerate(
+  contents: GeminiContent[],
+  options?: { systemPrompt?: string; signal?: AbortSignal },
+): AsyncGenerator<string, LlmTurnResult, undefined> {
+  const model = await getModel(options?.systemPrompt);
+  const result = await model.generateContentStream({ contents }, { signal: options?.signal });
+  let fullText = "";
+  for await (const chunk of result.stream) {
+    const t = chunk.text();
+    if (t) {
+      fullText += t;
+      yield t;
+    }
+  }
+  const response = await result.response;
+  const parts = response.candidates?.[0]?.content?.parts;
+  return {
+    text: extractText(parts) || fullText.trim(),
+    toolCalls: parseToolCalls(parts),
+  };
+}
+
 export function createGeminiLlmProvider(): LlmProvider {
   return {
     async chat(messages, options) {
@@ -163,6 +187,17 @@ export function createGeminiLlmProvider(): LlmProvider {
       }
 
       return runGenerate(contents, options);
+    },
+
+
+    async *chatStream(messages, options) {
+      const history = messages.slice(0, -1);
+      const last = messages[messages.length - 1];
+      const contents = messagesToContents(history);
+      if (last?.role === "user" && last.content) {
+        contents.push({ role: "user", parts: [{ text: last.content }] });
+      }
+      return yield* streamGenerate(contents, options);
     },
 
     async continueWithToolResults(messages, toolResults, options) {

@@ -210,9 +210,29 @@ export async function handleGetMenu(restaurantId: number) {
   return {
     status: 200 as const,
     body: {
-      categories,
+      categories: categories.map((cat) => {
+        const row = cat as Record<string, unknown>;
+        return {
+          id: row.id,
+          name: row.name,
+          is_combo: Boolean(row.is_combo),
+        };
+      }),
       items: items.map((item) => {
         const row = item as Record<string, unknown>;
+        let tags: string[] = [];
+        let allergens: unknown = row.allergens;
+        try {
+          const opts =
+            typeof row.options === "object" && row.options
+              ? (row.options as Record<string, unknown>)
+              : JSON.parse(String(row.options ?? "{}"));
+          if (Array.isArray((opts as { tags?: unknown }).tags)) {
+            tags = (opts as { tags: string[] }).tags;
+          }
+        } catch {
+          /* ignore */
+        }
         return {
           id: row.id,
           name: row.name,
@@ -222,6 +242,8 @@ export async function handleGetMenu(restaurantId: number) {
           category_id: row.category_id,
           sku: row.sku,
           is_available: row.is_available,
+          allergens,
+          tags,
         };
       }),
     },

@@ -32,6 +32,10 @@
     uiState: "idle",
     transcript: "",
     reconnectAttempts: 0,
+    audioFailCount: 0,
+    textOnlyMode: false,
+    earconEnabled: false,
+    workletNode: null,
   };
 
   var MAX_RECONNECT_ATTEMPTS = 5;
@@ -72,6 +76,10 @@
   var errorEl = el("div", "cherry-voice-error");
   var powered = el("div", "cherry-voice-powered", "Powered by Cherry Voice AI");
 
+  var bannerEl = el("div", "cherry-voice-banner");
+  bannerEl.style.display = "none";
+
+  body.appendChild(bannerEl);
   body.appendChild(statusEl);
   body.appendChild(transcriptEl);
   body.appendChild(actions);
@@ -223,8 +231,41 @@
     };
   }
 
+  function showBanner(msg) {
+    if (!msg) {
+      bannerEl.style.display = "none";
+      bannerEl.textContent = "";
+      return;
+    }
+    bannerEl.textContent = msg;
+    bannerEl.style.display = "block";
+  }
+
+  function playEarcon() {
+    try {
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      var o = ctx.createOscillator();
+      var g = ctx.createGain();
+      g.gain.value = 0.04;
+      o.frequency.value = 440;
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start();
+      o.stop(ctx.currentTime + 0.08);
+      o.onended = function () {
+        ctx.close();
+      };
+    } catch (e) {}
+  }
+
   function stopAudioPipeline() {
     stopPlayback();
+    if (state.workletNode) {
+      try {
+        state.workletNode.disconnect();
+      } catch (e) {}
+      state.workletNode = null;
+    }
     if (state.processor) {
       state.processor.disconnect();
       state.processor.onaudioprocess = null;
@@ -350,6 +391,26 @@
         if (data.data) playPcmChunk(data.data, data.sampleRate || 24000);
       } catch (e) {}
     });
+    state.eventSource.addEventListener("tool_start", function () {
+      if (state.earconEnabled) playEarcon();
+    });
+    state.eventSource.addEventListener("text_only_mode", function (ev) {
+      try {
+        var data = JSON.parse(ev.data);
+        state.textOnlyMode = true;
+        transcriptEl.classList.add("text-only-prominent");
+        showBanner(data.message || "Audio unavailable — read the transcript.");
+      } catch (e) {
+        state.textOnlyMode = true;
+        showBanner("Audio unavailable — read the transcript.");
+      }
+    });
+    state.eventSource.addEventListener("duration_warning", function (ev) {
+      try {
+        var data = JSON.parse(ev.data);
+        showBanner(data.message || "Call ending soon.");
+      } catch (e) {}
+    });
     state.eventSource.addEventListener("error", function (ev) {
       try {
         var data = JSON.parse(ev.data);
@@ -391,21 +452,29 @@
       state.mediaStream = stream;
       ensurePlaybackContext();
       state.audioContext = new (window.AudioContext || window.webkitAudioContext)();
-      var source = state.audioContext.createMediaStreamSource(stream);
-      state.processor = state.audioContext.createScriptProcessor(4096, 1, 1);
-      state.processor.onaudioprocess = function (e) {
-        if (!state.active || !session.audio_url) return;
-        var input = e.inputBuffer.getChannelData(0);
-        var down = downsample(input, state.audioContext.sampleRate, 16000);
-        var pcm = floatTo16BitPCM(down);
-        fetch(session.audio_url, {
-          method: "POST",
-          headers: { "Content-Type": "application/octet-stream" },
-          body: pcm,
-        }).catch(function () {});
-      };
-      source.connect(state.processor);
-      state.processor.connect(state.audioContext.destination);
+      var workletUrl = baseUrl + "/worklets/pcm-capture-processor.js";
+      return state.audioContext.audioWorklet.addModule(workletUrl).then(function () {
+        var source = state.audioContext.createMediaStreamSource(stream);
+        state.workletNode = new AudioWorkletNode(state.audioContext, "pcm-capture-processor");
+        state.workletNode.port.onmessage = function (ev) {
+          if (!state.active || !session.audio_url) return;
+          if (!ev.data || ev.data.type !== "pcm" || !ev.data.samples) return;
+          var down = downsample(ev.data.samples, state.audioContext.sampleRate, 16000);
+          var pcm = floatTo16BitPCM(down);
+          fetch(session.audio_url, {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: pcm,
+          }).catch(function () {
+            state.audioFailCount += 1;
+            if (state.audioFailCount >= 5) {
+              showBanner("Poor connection — try ending and calling back.");
+            }
+          });
+        };
+        source.connect(state.workletNode);
+        state.workletNode.connect(state.audioContext.destination);
+      });
     });
   }
 
@@ -449,6 +518,11 @@
         if (!json.ok || !json.data) throw new Error(json.error || "Session failed");
         state.session = json.data;
         state.active = true;
+        state.audioFailCount = 0;
+        state.textOnlyMode = false;
+        state.earconEnabled = Boolean(json.data.processing_earcon_enabled);
+        showBanner("");
+        transcriptEl.classList.remove("text-only-prominent");
         fab.classList.add("active");
         endBtn.disabled = false;
         connectEvents(json.data);

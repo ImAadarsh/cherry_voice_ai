@@ -39,6 +39,16 @@ CHERRY_VOICE_STT_MODEL=nova-3
 CHERRY_VOICE_TTS_MODEL=inworld-tts-2-flash
 ```
 
+### Edge SSE co-location (optional)
+
+For lower geographic latency on SSE event streams, set `CHERRY_VOICE_SSE_EDGE_URL` to an edge proxy that forwards to your app’s `/api/cherry-voice/session/:id/events` route. Session start responses use the edge URL for `events_url` when configured; audio and control URLs remain on `APP_BASE_URL`.
+
+```env
+CHERRY_VOICE_SSE_EDGE_URL=https://edge.cherryvoiceai.com
+```
+
+No edge deploy is required — leave unset to use the primary origin.
+
 ## Embed snippet
 
 ```html

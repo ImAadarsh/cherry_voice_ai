@@ -9,7 +9,7 @@ export function createInworldTtsProvider(): TtsProvider {
       const apiKey = await getInworldApiKey();
       if (!apiKey) throw new Error("INWORLD_API_KEY is not configured");
 
-      const modelId = await getCherryVoiceTtsModel();
+      const modelId = options.modelId ?? (await getCherryVoiceTtsModel());
       const res = await fetch("https://api.inworld.ai/tts/v1/voice:stream", {
         method: "POST",
         headers: {
@@ -38,6 +38,7 @@ export function createInworldTtsProvider(): TtsProvider {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let buffer = "";
+      let firstChunkSent = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -68,6 +69,10 @@ export function createInworldTtsProvider(): TtsProvider {
 
             const pcm = stripWavHeader(raw);
             if (pcm.length > 0) {
+              if (!firstChunkSent) {
+                firstChunkSent = true;
+                options.onFirstChunk?.();
+              }
               options.onAudioChunk?.(pcm);
             }
           } catch (err) {

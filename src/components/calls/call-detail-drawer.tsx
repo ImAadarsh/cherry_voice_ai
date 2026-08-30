@@ -36,6 +36,18 @@ type OmnidimCallLog = {
   transcript?: string;
   transcript_json?: TranscriptEntry[];
   tool_calls?: Array<Record<string, unknown>>;
+  turn_metrics?: Array<{
+    turn: number;
+    stt_ms: number;
+    llm_ms: number;
+    tool_ms: number;
+    tts_ttfa_ms: number;
+    total_ms: number;
+    timestamp: string;
+    zero_audio_chunks?: boolean;
+    user_text?: string;
+    agent_text?: string;
+  }>;
   recording_url?: string;
   duration?: number;
   duration_seconds?: number;
@@ -204,6 +216,43 @@ export function CallDetailDrawer({
                 <pre className="whitespace-pre-wrap font-mono text-xs">
                   {JSON.stringify(log.tool_calls, null, 2)}
                 </pre>
+              </ScrollArea>
+            </div>
+          )}
+
+          {log?.turn_metrics && log.turn_metrics.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase text-muted-foreground">
+                Session replay timeline
+              </p>
+              <ScrollArea className="max-h-72 rounded-xl border bg-muted/20 p-3">
+                <div className="space-y-3">
+                  {log.turn_metrics.map((turn) => (
+                    <div key={`turn-${turn.turn}-${turn.timestamp}`} className="rounded-lg border bg-card p-3 text-xs">
+                      <div className="mb-2 flex flex-wrap items-center gap-2">
+                        <Badge variant="outline">Turn {turn.turn}</Badge>
+                        <span className="text-muted-foreground">{turn.total_ms}ms total</span>
+                        {turn.zero_audio_chunks && (
+                          <Badge variant="destructive">0 audio chunks</Badge>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-muted-foreground">
+                        STT {turn.stt_ms}ms · LLM {turn.llm_ms}ms · Tools {turn.tool_ms}ms · TTS TTFA{" "}
+                        {turn.tts_ttfa_ms}ms
+                      </p>
+                      {turn.user_text && (
+                        <p className="mt-2">
+                          <span className="font-semibold">Customer:</span> {turn.user_text}
+                        </p>
+                      )}
+                      {turn.agent_text && (
+                        <p className="mt-1">
+                          <span className="font-semibold">Agent:</span> {turn.agent_text}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </ScrollArea>
             </div>
           )}

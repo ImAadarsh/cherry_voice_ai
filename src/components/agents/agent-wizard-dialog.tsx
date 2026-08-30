@@ -48,7 +48,8 @@ import {
 } from "@/lib/agent-constants";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
-import type { VoiceAgent } from "@/types";
+import type { PersonalityPreset, VoiceAgent } from "@/types";
+import { PERSONALITY_LABELS, PERSONALITY_PRESETS } from "@/lib/voice/personality";
 
 type WizardStep = "type" | "voice" | "knowledge" | "website" | "integrations" | "review";
 
@@ -96,6 +97,7 @@ export function AgentWizardDialog({
   const [voiceId, setVoiceId] = useState("");
   const [prompt, setPrompt] = useState("");
   const [greeting, setGreeting] = useState("");
+  const [personalityPreset, setPersonalityPreset] = useState<PersonalityPreset>("warm");
   const [widgetPosition, setWidgetPosition] = useState<"bottom-right" | "bottom-left">("bottom-right");
   const [accentColor, setAccentColor] = useState("#e11d48");
   const [widgetEnabled, setWidgetEnabled] = useState(true);
@@ -144,6 +146,7 @@ export function AgentWizardDialog({
       setName(agent.name);
       setVoiceId(agent.voice !== "Default" ? agent.voice : "");
       setGreeting(agent.greeting ?? "");
+      setPersonalityPreset(agent.personalityPreset ?? "warm");
       setAccentColor(agent.accentColor ?? "#e11d48");
       setWidgetPosition(agent.widgetPosition ?? "bottom-right");
       setWidgetEnabled(agent.widgetEnabled ?? true);

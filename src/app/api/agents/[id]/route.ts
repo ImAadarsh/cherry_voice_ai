@@ -62,6 +62,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
         widget_position: config.widget_position,
         accent_color: config.accent_color,
         is_enabled: config.is_enabled,
+        personality_preset: config.personality_preset,
         voice_id: row?.voice_id,
         context_breakdown: config.prompt
           ? [{ title: "Instructions", body: config.prompt, type: "text" }]
@@ -101,6 +102,7 @@ const patchSchema = z.object({
   widget_position: z.enum(["bottom-right", "bottom-left"]).optional(),
   accent_color: z.string().optional(),
   is_enabled: z.boolean().optional(),
+  personality_preset: z.enum(["warm", "professional", "casual"]).optional(),
 });
 
 /**
@@ -139,6 +141,7 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
         accentColor: parsed.data.accent_color,
         isEnabled: parsed.data.is_enabled,
         isPrimary: parsed.data.is_primary,
+        personalityPreset: parsed.data.personality_preset,
       });
 
       if (parsed.data.is_primary) {
