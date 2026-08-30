@@ -39,6 +39,8 @@ export interface NavItem {
 export interface SettingsNavItem {
   label: string;
   href: string;
+  /** only visible to super_admin */
+  superAdminOnly?: boolean;
 }
 
 export const settingsNavItems: SettingsNavItem[] = [
@@ -47,7 +49,7 @@ export const settingsNavItems: SettingsNavItem[] = [
   { label: "Notifications", href: "/settings/notifications" },
   { label: "Voice AI Settings", href: "/settings/omnidim" },
   { label: "Agent Flows", href: "/settings/agent-flows" },
-  { label: "Webhooks", href: "/settings/webhooks" },
+  { label: "Webhooks", href: "/settings/webhooks", superAdminOnly: true },
 ];
 
 export const navItems: NavItem[] = [

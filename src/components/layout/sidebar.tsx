@@ -104,7 +104,12 @@ export function Sidebar({
                   </button>
                   {settingsOpen && (
                     <div className="ml-3 space-y-0.5 border-l border-border pl-2">
-                      {settingsNavItems.map((sub) => {
+                      {settingsNavItems
+                        .filter(
+                          (sub) =>
+                            !sub.superAdminOnly || isSuperAdminRole(user?.role),
+                        )
+                        .map((sub) => {
                         const subActive =
                           pathname === sub.href || pathname.startsWith(`${sub.href}/`);
                         return (
@@ -154,7 +159,7 @@ export function Sidebar({
         </div>
       </nav>
 
-      <div className="shrink-0 border-t border-border p-2">
+      <div className="shrink-0 border-t border-border p-2 pb-[env(safe-area-inset-bottom,0px)]">
         {authenticated && !collapsed && (
           <div className="mb-1.5 flex items-center gap-2 rounded-md px-2 py-1.5">
             <Avatar className="h-8 w-8">

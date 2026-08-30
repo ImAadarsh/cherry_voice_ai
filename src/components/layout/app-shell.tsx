@@ -11,7 +11,7 @@ import { useOmnidimSync } from "@/hooks/use-omnidim-sync";
 import { cn } from "@/lib/utils";
 
 const MINIMAL_EXACT = ["/", "/offline", "/how-it-works"];
-const MINIMAL_PREFIXES = ["/onboarding", "/login", "/register", "/super-admin"];
+const MINIMAL_PREFIXES = ["/onboarding", "/login", "/register", "/super-admin", "/order", "/reservation"];
 
 function isMinimalRoute(pathname: string): boolean {
   if (MINIMAL_EXACT.includes(pathname)) return true;

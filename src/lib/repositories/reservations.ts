@@ -1,6 +1,7 @@
 import "server-only";
 import type { ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { pool, query, queryOne } from "../db";
+import { generateCustomerPageToken } from "../customer-page-token";
 
 export type ReservationStatus =
   | "pending"
@@ -37,10 +38,12 @@ export async function createReservation(
     customerId?: number | null;
   },
 ): Promise<number> {
+  const pageToken = generateCustomerPageToken();
+
   const [res] = await pool.query<ResultSetHeader>(
     `INSERT INTO reservations
-       (restaurant_id, customer_id, customer_name, customer_phone, party_size, reserved_at, status, notes)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+       (restaurant_id, customer_id, customer_name, customer_phone, party_size, reserved_at, status, notes, customer_page_token)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       restaurantId,
       input.customerId ?? null,
@@ -50,6 +53,7 @@ export async function createReservation(
       input.reservedAt,
       input.status ?? "pending",
       input.notes ?? null,
+      pageToken,
     ],
   );
   return res.insertId;

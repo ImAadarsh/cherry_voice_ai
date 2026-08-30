@@ -53,3 +53,45 @@ export async function notifyStaffNewOrder(
     );
   }
 }
+
+/** Notify staff when a customer corrects their delivery address on the public order page. */
+export async function notifyStaffAddressUpdate(
+  restaurantId: number,
+  order: { id: number; orderNumber: string; customerName?: string | null; address: string },
+): Promise<void> {
+  const enabled = await getSetting<boolean>(restaurantId, "notifications", "new_order_enabled");
+  if (enabled === false) return;
+
+  const webhookUrl = await getSetting<string>(restaurantId, "notifications", "new_order_webhook");
+  const email = await getSetting<string>(restaurantId, "notifications", "new_order_email");
+
+  const payload = {
+    event: "order.address_updated",
+    restaurant_id: restaurantId,
+    order_id: order.id,
+    order_number: order.orderNumber,
+    customer_name: order.customerName,
+    delivery_address: order.address,
+  };
+
+  if (webhookUrl && typeof webhookUrl === "string" && webhookUrl.startsWith("http")) {
+    try {
+      await fetch(webhookUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      console.error("[staff-notify] address webhook failed:", (err as Error).message);
+    }
+  }
+
+  if (email && typeof email === "string" && email.includes("@")) {
+    await sendEmail(
+      email,
+      `Address updated — order ${order.orderNumber}`,
+      `${order.customerName ?? "Customer"} updated the delivery address for order #${order.orderNumber}:\n\n${order.address}`,
+      { restaurantId, orderId: order.id },
+    );
+  }
+}

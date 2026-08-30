@@ -19,7 +19,6 @@ import {
 import { useApiQuery } from "@/hooks/use-api-query";
 import { VoicePicker } from "@/components/omnidim/voice-picker";
 import { OmnidimSyncButton } from "@/components/omnidim/omnidim-sync-button";
-import { EmbedCodeBlock } from "@/components/omnidim/embed-code-block";
 
 function ToggleRow({
   title,
@@ -58,7 +57,7 @@ export default function VoiceAiSettingsPage() {
     <div className="space-y-5">
       <PageHeader
         title="Voice AI Settings"
-        description="Voice agent sync, defaults, and website widget."
+        description="Voice agent sync, defaults, and call behavior."
       />
 
       {voiceAiStatus?.tunnel_required && (
@@ -121,15 +120,6 @@ export default function VoiceAiSettingsPage() {
             desc="Store call recordings for quality and training"
             defaultChecked
           />
-          {defaultAgentId && (
-            <div className="space-y-2 rounded-xl border bg-muted/20 p-4">
-              <Label>Website Voice Widget</Label>
-              <p className="text-xs text-muted-foreground">
-                Add a click-to-talk widget on your restaurant website.
-              </p>
-              <EmbedCodeBlock agentId={defaultAgentId} />
-            </div>
-          )}
           <div className="flex gap-2 pt-1">
             <OmnidimSyncButton />
             <Button onClick={() => toast.success("Voice AI settings saved")}>Save</Button>

@@ -21,6 +21,7 @@ type MeResponse = {
   user: AuthUser;
   restaurant: AuthRestaurant | null;
   restaurantId: number;
+  onboardingCompleted?: boolean;
 };
 
 export function useAuth() {
@@ -29,6 +30,7 @@ export function useAuth() {
     user: data?.user ?? null,
     restaurant: data?.restaurant ?? null,
     restaurantId: data?.restaurantId ?? null,
+    onboardingCompleted: data?.onboardingCompleted ?? false,
     loading,
     authenticated: Boolean(data?.user),
     error,

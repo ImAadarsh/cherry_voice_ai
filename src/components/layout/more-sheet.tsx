@@ -9,7 +9,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from "@/components/ui/sheet";
-import { navItems, settingsNavItems } from "@/lib/nav";
+import { navItems, settingsNavItems, isSuperAdminRole } from "@/lib/nav";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -35,14 +35,22 @@ export function MoreSheet({
     await logout();
   };
 
+  const visibleSettings = settingsNavItems.filter(
+    (sub) => !sub.superAdminOnly || isSuperAdminRole(user?.role),
+  );
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent side="bottom" className="rounded-t-2xl pb-8">
-        <SheetHeader className="flex-row items-center justify-between">
+      <SheetContent
+        side="bottom"
+        className="flex max-h-[min(90vh,720px)] flex-col rounded-t-2xl pb-[env(safe-area-inset-bottom,0px)]"
+      >
+        <SheetHeader className="shrink-0 flex-row items-center justify-between">
           <SheetTitle>More</SheetTitle>
           <ThemeToggle />
         </SheetHeader>
-        <div className="space-y-1 px-4">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div className="space-y-1 px-4 pb-2">
           {rest.map((item) => {
             if (item.settingsMenu) {
               return (
@@ -50,7 +58,7 @@ export function MoreSheet({
                   <p className="px-3 pt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     Settings
                   </p>
-                  {settingsNavItems.map((sub) => {
+                  {visibleSettings.map((sub) => {
                     const active =
                       pathname === sub.href || pathname.startsWith(`${sub.href}/`);
                     return (
@@ -91,10 +99,11 @@ export function MoreSheet({
               </Link>
             );
           })}
+          </div>
         </div>
 
         {authenticated ? (
-          <div className="mx-4 mt-4 space-y-2 rounded-xl border p-3">
+          <div className="mx-4 mt-2 shrink-0 space-y-2 rounded-xl border p-3">
             <div className="flex items-center gap-3">
               <Avatar className="h-10 w-10">
                 <AvatarFallback className="bg-primary/10 text-primary">

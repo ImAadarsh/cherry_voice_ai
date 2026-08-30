@@ -1,7 +1,9 @@
 import "server-only";
 import { queryOne } from "../db";
 import { env } from "../env";
+import { customerOrderPageUrl } from "../customer-page-token";
 import { getGateway } from "../payments";
+import { ensureOrderCustomerToken } from "../repositories/customer-pages";
 import { createPaymentRecord } from "../repositories/payments";
 import { sendSms, sendEmail, sendWhatsApp, type NotificationResult } from "../notifications";
 import { formatMoney } from "../money";
@@ -56,6 +58,8 @@ export async function createPaymentLinkForOrder(
 
   const chosen = provider ?? (await resolveProvider(restaurantId));
   const gateway = getGateway(chosen);
+  const pageToken = await ensureOrderCustomerToken(order.id);
+  const customerPageUrl = customerOrderPageUrl(pageToken, env.APP_BASE_URL);
 
   const result = await gateway.createPaymentLink({
     orderId: order.id,
@@ -66,8 +70,8 @@ export async function createPaymentLinkForOrder(
       name: order.customer_name ?? undefined,
       phone: order.customer_phone ?? undefined,
     },
-    callbackUrl: `${env.APP_BASE_URL}/pay/return?order=${order.id}`,
-    metadata: { order_id: order.id, restaurant_id: restaurantId },
+    callbackUrl: `${customerPageUrl}?paid=1`,
+    metadata: { order_id: order.id, restaurant_id: restaurantId, customer_page_token: pageToken },
   });
 
   await createPaymentRecord({
@@ -124,7 +128,9 @@ export async function sendPaymentLinkForOrder(
   const phone = opts?.phoneOverride ?? order?.customer_phone ?? "";
   const email = opts?.emailOverride ?? order?.customer_email ?? "";
   const amount = order ? formatMoney(order.total_amount, order.currency) : "";
-  const message = `Your order is ready for payment. Pay ${amount} securely here: ${link.url}`;
+  const pageToken = await ensureOrderCustomerToken(orderId);
+  const trackUrl = customerOrderPageUrl(pageToken, env.APP_BASE_URL);
+  const message = `Your order from us is ready. Track & pay ${amount} here: ${trackUrl}`;
 
   const channels = opts?.channels ?? [
     ...(phone ? (["sms"] as const) : []),

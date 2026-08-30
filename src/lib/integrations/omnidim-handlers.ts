@@ -1,6 +1,9 @@
 import "server-only";
 import { z } from "zod";
+import { env } from "@/lib/env";
+import { customerOrderPageUrl, customerReservationPageUrl } from "@/lib/customer-page-token";
 import { createOrder, getOrder } from "@/lib/repositories/orders";
+import { ensureOrderCustomerToken, ensureReservationCustomerToken } from "@/lib/repositories/customer-pages";
 import { listCategories, listMenuItems } from "@/lib/repositories/menu";
 import { findCustomerByPhone } from "@/lib/repositories/customers-lookup";
 import { createReservation } from "@/lib/repositories/reservations";
@@ -97,14 +100,19 @@ export async function handleCreateOrder(restaurantId: number, body: unknown) {
   });
 
   const order = await getOrder(restaurantId, orderId);
+  const row = order as Record<string, unknown> | null;
+  const pageToken =
+    (row?.customer_page_token as string | undefined) ?? (await ensureOrderCustomerToken(orderId));
   return {
     status: 201 as const,
     body: {
       order_id: orderId,
-      order_number: (order as Record<string, unknown> | null)?.order_number ?? null,
-      total_amount: (order as Record<string, unknown> | null)?.total_amount ?? null,
-      currency: (order as Record<string, unknown> | null)?.currency ?? null,
+      order_number: row?.order_number ?? null,
+      total_amount: row?.total_amount ?? null,
+      currency: row?.currency ?? null,
       status: "pending",
+      customer_page_token: pageToken,
+      customer_page_url: customerOrderPageUrl(pageToken, env.APP_BASE_URL),
     },
   };
 }
@@ -166,10 +174,12 @@ export async function handleSendPaymentLink(restaurantId: number, body: unknown)
       emailOverride: parsed.data.email,
       channels: parsed.data.channels,
     });
+    const pageToken = await ensureOrderCustomerToken(parsed.data.order_id);
     return {
       status: 200 as const,
       body: {
         payment_link: link.url,
+        customer_page_url: customerOrderPageUrl(pageToken, env.APP_BASE_URL),
         provider: link.provider,
         sends,
       },
@@ -202,6 +212,8 @@ export async function handleCreateReservation(restaurantId: number, body: unknow
     status: "confirmed",
   });
 
+  const pageToken = await ensureReservationCustomerToken(id);
+
   return {
     status: 201 as const,
     body: {
@@ -210,6 +222,8 @@ export async function handleCreateReservation(restaurantId: number, body: unknow
       customer_name: parsed.data.customer_name,
       party_size: parsed.data.party_size,
       reserved_at: parsed.data.reserved_at,
+      customer_page_token: pageToken,
+      customer_page_url: customerReservationPageUrl(pageToken, env.APP_BASE_URL),
     },
   };
 }

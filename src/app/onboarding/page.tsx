@@ -49,6 +49,95 @@ const STEPS = [
 
 type StepId = (typeof STEPS)[number]["id"];
 
+type OnboardingPrefill = {
+  restaurantName: string;
+  profile: {
+    currency: string;
+    city: string;
+    country: string;
+    deliveryArea: string;
+    addressLine1: string;
+    hours: string;
+    policies: string;
+    cuisineType: string;
+  };
+  menuItems: Array<{ name: string; price: number; description?: string }>;
+  agent: {
+    id: string;
+    localId: number;
+    name: string;
+    voiceId: string | null;
+    phoneNumber: string | null;
+  } | null;
+  websiteUrl: string;
+  generatedPrompt: string;
+  userName?: string;
+  userEmail?: string;
+};
+
+type OnboardingStateResponse = {
+  completed: boolean;
+  step: StepId;
+  restaurantId?: number;
+  prefill: OnboardingPrefill | null;
+};
+
+function applyPrefill(
+  prefill: OnboardingPrefill,
+  setters: {
+    setAccount: React.Dispatch<
+      React.SetStateAction<{
+        name: string;
+        email: string;
+        password: string;
+        restaurantName: string;
+      }>
+    >;
+    setProfile: React.Dispatch<
+      React.SetStateAction<{
+        currency: string;
+        city: string;
+        country: string;
+        deliveryArea: string;
+        addressLine1: string;
+        hours: string;
+        policies: string;
+        cuisineType: string;
+      }>
+    >;
+    setExtracted: React.Dispatch<
+      React.SetStateAction<Array<{ name: string; price: number; description?: string }>>
+    >;
+    setAgentName: React.Dispatch<React.SetStateAction<string>>;
+    setCreatedAgentId: React.Dispatch<React.SetStateAction<string | null>>;
+    setSelectedVoice: React.Dispatch<React.SetStateAction<string>>;
+    setSelectedPhone: React.Dispatch<React.SetStateAction<string>>;
+    setAgentPrompt: React.Dispatch<React.SetStateAction<string>>;
+    setWebsiteUrl: React.Dispatch<React.SetStateAction<string>>;
+    promptGenerated: React.MutableRefObject<boolean>;
+  },
+) {
+  setters.setAccount((prev) => ({
+    ...prev,
+    restaurantName: prefill.restaurantName || prev.restaurantName,
+    name: prefill.userName || prev.name,
+    email: prefill.userEmail || prev.email,
+  }));
+  setters.setProfile(prefill.profile);
+  if (prefill.menuItems.length > 0) setters.setExtracted(prefill.menuItems);
+  if (prefill.agent) {
+    setters.setAgentName(prefill.agent.name);
+    setters.setCreatedAgentId(prefill.agent.id);
+    if (prefill.agent.voiceId) setters.setSelectedVoice(prefill.agent.voiceId);
+    if (prefill.agent.phoneNumber) setters.setSelectedPhone(prefill.agent.phoneNumber);
+  }
+  if (prefill.generatedPrompt) {
+    setters.setAgentPrompt(prefill.generatedPrompt);
+    setters.promptGenerated.current = true;
+  }
+  if (prefill.websiteUrl) setters.setWebsiteUrl(prefill.websiteUrl);
+}
+
 const AGENT_PROMPT = `You are a friendly voice ordering assistant for {{restaurant_name}}.
 Take orders clearly, confirm items and quantities, mention prices, and collect delivery or pickup preference.
 If unsure about a menu item, ask clarifying questions. Be warm and efficient.`;
@@ -110,6 +199,36 @@ export default function OnboardingPage() {
   const stepIndex = STEPS.findIndex((s) => s.id === step);
   const progress = ((stepIndex + 1) / STEPS.length) * 100;
 
+  useEffect(() => {
+    void (async () => {
+      try {
+        const state = await api.get<OnboardingStateResponse>("/api/onboarding/state");
+        if (state.completed) {
+          router.replace("/dashboard");
+          return;
+        }
+        if (state.restaurantId) setRestaurantId(state.restaurantId);
+        if (state.prefill) {
+          applyPrefill(state.prefill, {
+            setAccount,
+            setProfile,
+            setExtracted,
+            setAgentName,
+            setCreatedAgentId,
+            setSelectedVoice,
+            setSelectedPhone,
+            setAgentPrompt,
+            setWebsiteUrl,
+            promptGenerated,
+          });
+        }
+        if (state.step && state.step !== "account") setStep(state.step);
+      } catch {
+        /* not signed in — stay on account step */
+      }
+    })();
+  }, [router]);
+
   const next = () => {
     const i = STEPS.findIndex((s) => s.id === step);
     if (i < STEPS.length - 1) setStep(STEPS[i + 1].id);
@@ -143,12 +262,34 @@ export default function OnboardingPage() {
           password: account.password,
         });
         setRestaurantId(res.restaurantId);
-        toast.success("Signed in");
-      } else {
-        const res = await api.post<{ restaurantId: number }>("/api/auth/register", account);
-        setRestaurantId(res.restaurantId);
-        toast.success("Account created");
+        const state = await api.get<OnboardingStateResponse>("/api/onboarding/state");
+        if (state.completed) {
+          toast.success("Welcome back!");
+          router.push("/dashboard");
+          router.refresh();
+          return;
+        }
+        if (state.prefill) {
+          applyPrefill(state.prefill, {
+            setAccount,
+            setProfile,
+            setExtracted,
+            setAgentName,
+            setCreatedAgentId,
+            setSelectedVoice,
+            setSelectedPhone,
+            setAgentPrompt,
+            setWebsiteUrl,
+            promptGenerated,
+          });
+        }
+        setStep(state.step === "account" ? "profile" : state.step);
+        toast.success("Signed in — continue where you left off");
+        return;
       }
+      const res = await api.post<{ restaurantId: number }>("/api/auth/register", account);
+      setRestaurantId(res.restaurantId);
+      toast.success("Account created");
       next();
     } catch (e) {
       toast.error((e as Error).message);

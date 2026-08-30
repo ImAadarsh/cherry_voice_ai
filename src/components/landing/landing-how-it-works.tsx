@@ -35,7 +35,7 @@ const steps = [
     icon: CreditCard,
     title: "Payment collected",
     description:
-      "Cherry sends a payment link, confirms the order, and logs everything to your dashboard.",
+      "Cherry sends a customer tracking link with pay-now and invoice download — everything logged to your dashboard.",
   },
 ];
 

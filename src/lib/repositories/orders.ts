@@ -1,6 +1,7 @@
 import "server-only";
 import type { PoolConnection, ResultSetHeader, RowDataPacket } from "mysql2/promise";
 import { pool, query, queryOne, withTransaction } from "../db";
+import { generateCustomerPageToken } from "../customer-page-token";
 import { upsertCustomerByPhone } from "./customers";
 import { notifyStaffNewOrder } from "../services/staff-notifications";
 import type { OrderChannel, OrderType } from "@/types";
@@ -73,18 +74,21 @@ export async function createOrder(input: CreateOrderInput): Promise<number> {
     const tip = input.tipAmount ?? 0;
     const total = subtotal + taxAmount + deliveryFee + tip - discount;
 
+    const pageToken = generateCustomerPageToken();
+
     const [orderRes] = await conn.query<ResultSetHeader>(
       `INSERT INTO orders
-         (restaurant_id, customer_id, call_log_id, agent_id, order_number, channel, order_type,
+         (restaurant_id, customer_id, call_log_id, agent_id, order_number, customer_page_token, channel, order_type,
           status, payment_status, currency, subtotal, tax_amount, delivery_fee, discount_amount,
           tip_amount, total_amount, customer_name, customer_phone, delivery_address, notes, placed_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 'unpaid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'unpaid', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`,
       [
         input.restaurantId,
         customerId,
         input.callLogId ?? null,
         input.agentId ?? null,
         generateOrderNumber(),
+        pageToken,
         input.channel ?? "voice",
         input.orderType ?? "pickup",
         currency,

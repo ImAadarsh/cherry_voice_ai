@@ -39,14 +39,14 @@ const features = [
     icon: CreditCard,
     title: "Payments",
     description:
-      "Stripe, Razorpay, and payment links — collect revenue the moment the caller confirms.",
+      "Stripe, Razorpay, and customer tracking links with pay-now and invoice download.",
     className: "",
   },
   {
     icon: CalendarDays,
     title: "Reservations",
     description:
-      "Book tables, manage party sizes, and send confirmation texts — all over the phone.",
+      "Book tables over the phone and send guests a live reservation status page.",
     className: "",
   },
   {

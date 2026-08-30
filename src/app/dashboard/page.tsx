@@ -42,7 +42,7 @@ type AnalyticsResponse = {
 };
 
 export default function DashboardPage() {
-  const { user, restaurant, authenticated, loading: authLoading } = useAuth();
+  const { user, restaurant, authenticated, loading: authLoading, onboardingCompleted } = useAuth();
   const { formatMoney } = useCurrency();
   const { data, loading, error, retry } = useApiQuery<AnalyticsResponse>(
     authenticated ? "/api/analytics" : null,
@@ -114,9 +114,11 @@ export default function DashboardPage() {
         <Button variant="outline" size="sm" asChild>
           <Link href="/analytics">View analytics</Link>
         </Button>
-        <Button variant="outline" size="sm" asChild>
-          <Link href="/onboarding">Setup</Link>
-        </Button>
+        {!onboardingCompleted && (
+          <Button variant="outline" size="sm" asChild>
+            <Link href="/onboarding">Setup</Link>
+          </Button>
+        )}
       </PageHeader>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
