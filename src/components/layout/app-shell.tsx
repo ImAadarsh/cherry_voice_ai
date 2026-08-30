@@ -57,7 +57,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         )}
       >
         <Topbar onOpenSearch={() => setSearchOpen(true)} />
-        <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-28 pt-5 sm:px-6 lg:px-8 lg:pb-8">
+        <main className="min-h-0 flex-1 overflow-y-auto px-4 pb-[calc(5.5rem+env(safe-area-inset-bottom,0px))] pt-5 sm:px-6 lg:px-8 lg:pb-8">
           <div className="mx-auto w-full max-w-7xl">{children}</div>
         </main>
       </div>
