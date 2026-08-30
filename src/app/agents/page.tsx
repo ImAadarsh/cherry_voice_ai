@@ -29,6 +29,7 @@ import { OmnidimSyncButton } from "@/components/omnidim/omnidim-sync-button";
 import { AgentWizardDialog } from "@/components/agents/agent-wizard-dialog";
 import { CallDetailDrawer } from "@/components/calls/call-detail-drawer";
 import { WebCallDialog } from "@/components/omnidim/web-call-dialog";
+import { CherryVoiceWebCallDialog } from "@/components/cherry-voice/web-call-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -101,6 +102,7 @@ export default function AgentsPage() {
   const [selectedCall, setSelectedCall] = useState<CallLog | null>(null);
   const [webCallFor, setWebCallFor] = useState<VoiceAgent | null>(null);
   const [demoCallFor, setDemoCallFor] = useState<VoiceAgent | null>(null);
+  const [cherryWebCallFor, setCherryWebCallFor] = useState<VoiceAgent | null>(null);
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editAgent, setEditAgent] = useState<VoiceAgent | null>(null);
   const [deleteAgent, setDeleteAgent] = useState<VoiceAgent | null>(null);
@@ -369,6 +371,7 @@ export default function AgentsPage() {
                     demoUrl={demoUrl}
                     embedScript={embedScript}
                     voiceLabel={voiceLabel(agent.voice)}
+                    onWebCall={() => setCherryWebCallFor(agent)}
                     onEdit={() => openEdit(agent)}
                     onDelete={() => setDeleteAgent(agent)}
                     onSetPrimary={() => void handleSetPrimary(agent)}
@@ -492,6 +495,13 @@ export default function AgentsPage() {
         mode="demo"
       />
 
+      <CherryVoiceWebCallDialog
+        open={!!cherryWebCallFor}
+        onOpenChange={(open) => !open && setCherryWebCallFor(null)}
+        agentId={cherryWebCallFor?.omnidimAgentId}
+        agentName={cherryWebCallFor?.name}
+      />
+
       <AgentWizardDialog
         open={wizardOpen}
         onOpenChange={setWizardOpen}
@@ -559,6 +569,7 @@ function NativeAgentCard({
   demoUrl,
   embedScript,
   voiceLabel,
+  onWebCall,
   onEdit,
   onDelete,
   onSetPrimary,
@@ -569,6 +580,7 @@ function NativeAgentCard({
   demoUrl?: string;
   embedScript?: string;
   voiceLabel: string;
+  onWebCall: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onSetPrimary: () => void;
@@ -610,24 +622,30 @@ function NativeAgentCard({
           </div>
           <div>
             <dt className="text-xs text-muted-foreground">Channel</dt>
-            <dd className="font-medium">Website widget</dd>
+            <dd className="font-medium">Web & widget</dd>
           </div>
         </dl>
 
         <div className="mt-4 flex flex-wrap gap-2">
+          <Button size="sm" className="gap-1.5" onClick={onWebCall}>
+            <Mic2 className="h-3.5 w-3.5" /> Web call
+          </Button>
           {demoUrl && (
             <Button size="sm" variant="secondary" className="gap-1.5" asChild>
               <a href={demoUrl} target="_blank" rel="noreferrer">
-                <Globe className="h-3.5 w-3.5" /> Test call
+                <ExternalLink className="h-3.5 w-3.5" /> Test call
               </a>
             </Button>
           )}
           {embedScript && (
             <Button size="sm" variant="outline" className="gap-1.5" onClick={onCopyEmbed}>
               {copiedEmbed ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-              Embed code
+              Widget embed
             </Button>
           )}
+          <Button size="sm" variant="outline" className="gap-1.5" disabled title="Phone calls coming soon">
+            <PhoneOutgoing className="h-3.5 w-3.5" /> Phone
+          </Button>
           <Button size="sm" variant="outline" className="gap-1.5" onClick={onEdit}>
             <Pencil className="h-3.5 w-3.5" /> Edit
           </Button>

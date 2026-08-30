@@ -16,6 +16,8 @@ export const INWORLD_VOICES: InworldVoiceOption[] = [
   { id: "Theodore", label: "Theodore", description: "Mature male" },
 ];
 
+/** Accept any non-empty voice id — catalog is loaded dynamically from Inworld API. */
 export function isValidInworldVoice(voiceId: string): boolean {
-  return INWORLD_VOICES.some((v) => v.id === voiceId);
+  const trimmed = voiceId.trim();
+  return trimmed.length > 0 && trimmed.length <= 200;
 }
