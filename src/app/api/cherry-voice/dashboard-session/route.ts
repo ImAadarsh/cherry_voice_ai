@@ -7,7 +7,7 @@ import { getCherryVoiceSettingsByRestaurant } from "@/lib/repositories/cherry-vo
 import { env } from "@/lib/env";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { resolveRestaurantSttLocale } from "@/lib/voice/deepgram-locale";
-import { isCherryVoiceConfigured } from "@/lib/voice/config";
+import { isCherryVoiceConfigured, getCherryVoiceMode } from "@/lib/voice/config";
 import { startVoiceOrchestrator } from "@/lib/voice/orchestrator";
 import { createVoiceSession } from "@/lib/voice/session-store";
 import { normalizePersonalityPreset } from "@/lib/voice/personality";
@@ -32,6 +32,14 @@ export async function POST(req: Request) {
 
     if (!(await isCherryVoiceConfigured())) {
       return fail("Cherry Voice is not configured on this server", 503);
+    }
+
+    const mode = await getCherryVoiceMode();
+    if (mode === "inworld_realtime") {
+      return fail(
+        "Native agents use Inworld Realtime. Call POST /api/cherry-voice/realtime/session instead.",
+        409,
+      );
     }
 
     const settings = await getCherryVoiceSettingsByRestaurant(restaurantId);

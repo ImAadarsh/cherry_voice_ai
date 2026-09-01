@@ -1,8 +1,9 @@
 import "server-only";
 import { createDeepgramSttProvider } from "./providers/deepgram-stt";
-import { createGeminiLlmProvider, truncateToSpokenSentences } from "./providers/gemini-llm";
+import { truncateToSpokenSentences } from "./providers/gemini-llm";
 import { createInworldTtsProvider } from "./providers/inworld-tts";
-import type { LlmMessage, LlmTurnResult } from "./providers/types";
+import type { LlmMessage, LlmProvider, LlmTurnResult } from "./providers/types";
+import { createCherryVoiceLlmProvider } from "./llm-provider";
 import {
   cancelInFlightLlm,
   cancelInFlightTurn,
@@ -53,8 +54,13 @@ import { matchSemanticCache } from "./semantic-cache";
 import { sanitizeTextForTts } from "./tts-sanitize";
 
 const sttBySession = new Map<string, ReturnType<typeof createDeepgramSttProvider>>();
-const llm = createGeminiLlmProvider();
 const tts = createInworldTtsProvider();
+let llmPromise: Promise<LlmProvider> | null = null;
+
+async function getLlm(): Promise<LlmProvider> {
+  if (!llmPromise) llmPromise = createCherryVoiceLlmProvider();
+  return llmPromise;
+}
 
 const SILENCE_CHECK_MS = 10_000;
 const SILENCE_PROMPT_AFTER_MS = 45_000;
@@ -76,6 +82,8 @@ const HALF_DUPLEX_TAIL_MS = 100;
 /** Warn and force mic resume if caller is silent too long after agent speech. */
 const MIC_WATCHDOG_MS = 10_000;
 const MIC_WATCHDOG_INTERVAL_MS = 2_000;
+/** Force listening if stuck in speaking state (half-duplex recovery). */
+const SPEAKING_STUCK_MS = 15_000;
 /** Keep only recent exchanges in LLM context. */
 const MAX_LLM_TURN_HISTORY = 4;
 
@@ -234,6 +242,7 @@ async function streamLlmToSpeech(
 ): Promise<string> {
   if (isUtteranceStale(session, utteranceId)) return "";
 
+  const llm = await getLlm();
   const systemPrompt = await buildVoiceSystemPrompt(session, userText);
   const baseCount = session.messages.length;
   const history = recentSessionMessages(session.messages);

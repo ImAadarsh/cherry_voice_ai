@@ -11,7 +11,11 @@ export type PlatformSettingKey =
   | "app_base_url"
   | "deepgram_api_key"
   | "inworld_api_key"
-  | "cherry_voice_gemini_model";
+  | "cherry_voice_gemini_model"
+  | "cherry_voice_llm_provider"
+  | "inworld_router_model"
+  | "cherry_voice_mode"
+  | "inworld_realtime_model";
 
 const SECRET_KEYS = new Set<PlatformSettingKey>([
   "omnidim_api_key",
@@ -98,6 +102,8 @@ export async function getPlatformSettingsPublic() {
     "deepgram_api_key",
     "inworld_api_key",
     "cherry_voice_gemini_model",
+    "cherry_voice_llm_provider",
+    "inworld_router_model",
   ];
 
   const settings: Record<string, unknown> = {};

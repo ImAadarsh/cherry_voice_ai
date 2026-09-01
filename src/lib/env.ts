@@ -32,6 +32,11 @@ const schema = z.object({
   // Cherry Voice native web agent
   DEEPGRAM_API_KEY: z.string().optional().default(""),
   INWORLD_API_KEY: z.string().optional().default(""),
+  INWORLD_ROUTER_MODEL: z.string().optional().default("inworld/models/gemma-4-26b-a4b-it"),
+  INWORLD_REALTIME_MODEL: z.string().optional().default("inworld/models/gemma-4-26b-a4b-it"),
+  /** Native Cherry Voice transport: inworld_realtime (default) or legacy pipeline. */
+  CHERRY_VOICE_MODE: z.enum(["inworld_realtime", "pipeline"]).optional().default("inworld_realtime"),
+  CHERRY_VOICE_LLM_PROVIDER: z.enum(["gemini", "inworld"]).optional().default("inworld"),
   CHERRY_VOICE_GEMINI_MODEL: z.string().optional().default("gemini-3.5-flash-lite"),
   CHERRY_VOICE_STT_MODEL: z.string().optional().default("nova-3"),
   CHERRY_VOICE_TTS_MODEL: z.string().optional().default("inworld-tts-2-flash"),

@@ -4,7 +4,7 @@ import { readJson } from "@/lib/http";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { getCherryVoiceSettingsByToken } from "@/lib/repositories/cherry-voice";
 import { resolveRestaurantSttLocale } from "@/lib/voice/deepgram-locale";
-import { isCherryVoiceConfigured } from "@/lib/voice/config";
+import { isCherryVoiceConfigured, getCherryVoiceMode } from "@/lib/voice/config";
 import { resolveInworldVoiceId } from "@/lib/voice/inworld-voices";
 import { startVoiceOrchestrator } from "@/lib/voice/orchestrator";
 import { createVoiceSession } from "@/lib/voice/session-store";
@@ -37,6 +37,14 @@ export async function POST(req: Request) {
 
   if (!(await isCherryVoiceConfigured())) {
     return cherryVoiceFail("Cherry Voice is not configured on this server", 503);
+  }
+
+  const mode = await getCherryVoiceMode();
+  if (mode === "inworld_realtime") {
+    return cherryVoiceFail(
+      "Widget Realtime WebRTC is not enabled yet. Use POST /api/cherry-voice/realtime/session with widget token.",
+      409,
+    );
   }
 
   const body = await readJson(req);

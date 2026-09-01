@@ -1,14 +1,16 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { ok } from "@/lib/http";
 import { handleRouteError } from "@/lib/api-error";
 import { requireRestaurantId } from "@/lib/route-auth";
 import {
   getCherryVoiceGeminiModel,
+  getCherryVoiceMode,
   getCherryVoiceSttModel,
   getCherryVoiceTtsModel,
   getDeepgramApiKey,
   getInworldApiKey,
+  isCherryVoiceRealtimeConfigured,
 } from "@/lib/voice/config";
+import { checkInworldRealtimeHealth } from "@/lib/voice/realtime-config";
 import { getGeminiApiKey } from "@/lib/platform-config";
 
 export const runtime = "nodejs";
@@ -19,6 +21,7 @@ type ProviderStatus = {
   ok: boolean;
   latency_ms?: number;
   error?: string;
+  model?: string;
 };
 
 async function checkDeepgram(apiKey: string): Promise<ProviderStatus> {
@@ -45,7 +48,7 @@ async function checkDeepgram(apiKey: string): Promise<ProviderStatus> {
   }
 }
 
-async function checkInworld(apiKey: string): Promise<ProviderStatus> {
+async function checkInworldTts(apiKey: string): Promise<ProviderStatus> {
   if (!apiKey) return { configured: false, ok: false, error: "INWORLD_API_KEY missing" };
   const start = Date.now();
   const modelId = await getCherryVoiceTtsModel();
@@ -68,6 +71,7 @@ async function checkInworld(apiKey: string): Promise<ProviderStatus> {
       configured: true,
       ok: res.ok,
       latency_ms: Date.now() - start,
+      model: modelId,
       ...(res.ok ? {} : { error: `HTTP ${res.status}` }),
     };
   } catch (err) {
@@ -75,6 +79,7 @@ async function checkInworld(apiKey: string): Promise<ProviderStatus> {
       configured: true,
       ok: false,
       latency_ms: Date.now() - start,
+      model: modelId,
       error: (err as Error).message,
     };
   }
@@ -84,6 +89,7 @@ async function checkGemini(apiKey: string): Promise<ProviderStatus> {
   if (!apiKey) return { configured: false, ok: false, error: "GEMINI_API_KEY missing" };
   const start = Date.now();
   try {
+    const { GoogleGenerativeAI } = await import("@google/generative-ai");
     const modelName = await getCherryVoiceGeminiModel();
     const genAI = new GoogleGenerativeAI(apiKey);
     const model = genAI.getGenerativeModel({ model: modelName });
@@ -91,7 +97,7 @@ async function checkGemini(apiKey: string): Promise<ProviderStatus> {
       { contents: [{ role: "user", parts: [{ text: "ping" }] }] },
       { signal: AbortSignal.timeout(10_000) },
     );
-    return { configured: true, ok: true, latency_ms: Date.now() - start };
+    return { configured: true, ok: true, latency_ms: Date.now() - start, model: modelName };
   } catch (err) {
     return {
       configured: true,
@@ -102,21 +108,32 @@ async function checkGemini(apiKey: string): Promise<ProviderStatus> {
   }
 }
 
-/** GET /api/cherry-voice/health — verify Deepgram, Inworld, and Gemini keys */
+/** GET /api/cherry-voice/health — verify Cherry Voice providers (Realtime or legacy pipeline) */
 export async function GET(req: Request) {
   try {
     const restaurantId = await requireRestaurantId(req);
     if (restaurantId instanceof Response) return restaurantId;
 
-    const [deepgramKey, inworldKey, geminiKey] = await Promise.all([
-      getDeepgramApiKey(),
-      getInworldApiKey(),
-      getGeminiApiKey(),
-    ]);
+    const mode = await getCherryVoiceMode();
+    const inworldKey = await getInworldApiKey();
+    const realtime = await checkInworldRealtimeHealth();
 
+    if (mode === "inworld_realtime") {
+      const allOk = realtime.ok && (await isCherryVoiceRealtimeConfigured());
+      return ok({
+        status: allOk ? "healthy" : "degraded",
+        mode,
+        providers: {
+          realtime,
+        },
+        time: new Date().toISOString(),
+      });
+    }
+
+    const [deepgramKey, geminiKey] = await Promise.all([getDeepgramApiKey(), getGeminiApiKey()]);
     const [deepgram, inworld, gemini] = await Promise.all([
       checkDeepgram(deepgramKey),
-      checkInworld(inworldKey),
+      checkInworldTts(inworldKey),
       checkGemini(geminiKey),
     ]);
 
@@ -127,10 +144,12 @@ export async function GET(req: Request) {
 
     return ok({
       status: allOk ? "healthy" : "degraded",
+      mode,
       providers: {
         deepgram: { ...deepgram, model: sttModel },
         inworld: { ...inworld, model: ttsModel },
         gemini: { ...gemini, model: llmModel },
+        realtime,
       },
       time: new Date().toISOString(),
     });
