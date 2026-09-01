@@ -12,6 +12,7 @@ export const VOICE_STYLE_PROMPT = `## Voice response rules (critical)
 /** Prompt block for voice agents — compact to keep system prompt under ~1000 tokens. */
 export const VOICE_INTEGRATION_TOOLS_PROMPT = `## Tools
 Use tools for real actions — never invent ids or prices.
+You MUST call get_menu when the caller asks about the menu, dishes, or prices — never guess items or prices.
 - **get_menu** — When caller asks about menu/prices; summarize briefly.
 - **create_order** — Once per call after readback + order_confirmed: true.
 - **update_order** — Changes after first create_order.

@@ -72,6 +72,7 @@ export type RealtimeSessionConfig = {
     };
   };
   tools: typeof CHERRY_VOICE_REALTIME_TOOLS;
+  tool_choice: "auto";
   providerData: {
     auto_tool_response: boolean;
     stt: {
@@ -118,6 +119,7 @@ export async function buildRealtimeSessionConfig(
       },
     },
     tools: CHERRY_VOICE_REALTIME_TOOLS,
+    tool_choice: "auto",
     providerData: {
       auto_tool_response: false,
       stt: {

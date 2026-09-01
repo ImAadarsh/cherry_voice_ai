@@ -6,6 +6,7 @@ import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { isCherryVoiceRealtimeConfigured } from "@/lib/voice/config";
 import { proxyInworldSdpOffer, type RealtimeSessionConfig } from "@/lib/voice/realtime-config";
 import { getVoiceSession } from "@/lib/voice/session-store";
+import { rebuildRealtimeSessionConfig } from "@/lib/voice/realtime-session";
 import {
   cherryVoiceFail,
   cherryVoiceOptionsResponse,
@@ -74,14 +75,9 @@ export async function POST(req: Request) {
     if (authErr) return authErr;
 
     let sessionConfig = parsed.data.session_config as RealtimeSessionConfig | undefined;
-    if (parsed.data.session_id && !sessionConfig) {
-      const session = getVoiceSession(parsed.data.session_id);
-      if (session) {
-        const { buildRealtimeSessionConfig } = await import("@/lib/voice/realtime-config");
-        const { buildVoiceSystemPrompt } = await import("@/lib/voice/system-prompt");
-        const instructions = await buildVoiceSystemPrompt(session);
-        sessionConfig = await buildRealtimeSessionConfig(session, instructions);
-      }
+    if (parsed.data.session_id) {
+      const rebuilt = await rebuildRealtimeSessionConfig(parsed.data.session_id);
+      if (rebuilt) sessionConfig = rebuilt;
     }
 
     const result = await proxyInworldSdpOffer(parsed.data.sdp, sessionConfig);

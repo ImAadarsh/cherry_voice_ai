@@ -27,6 +27,7 @@ export interface VoiceSessionRecord {
   voiceId: string;
   greeting: string | null;
   personalityPreset: PersonalityPreset;
+  agentCustomPrompt: string | null;
   transport: VoiceTransport;
   callerPhone: string | null;
   branchLabel: string | null;
@@ -100,6 +101,7 @@ export function createVoiceSession(input: {
   agentId?: number | null;
   callLogId?: number | null;
   personalityPreset?: PersonalityPreset;
+  agentCustomPrompt?: string | null;
   transport?: VoiceTransport;
   callerPhone?: string | null;
   branchLabel?: string | null;
@@ -115,6 +117,7 @@ export function createVoiceSession(input: {
     voiceId: input.voiceId,
     greeting: input.greeting,
     personalityPreset: normalizePersonalityPreset(input.personalityPreset),
+    agentCustomPrompt: input.agentCustomPrompt?.trim() ? input.agentCustomPrompt.trim() : null,
     transport: input.transport ?? "web",
     callerPhone: input.callerPhone ?? null,
     branchLabel: input.branchLabel ?? null,

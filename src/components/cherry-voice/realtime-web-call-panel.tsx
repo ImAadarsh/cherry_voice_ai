@@ -161,6 +161,19 @@ export function RealtimeWebCallPanel({
     }
   }, []);
 
+  const sendSessionUpdate = useCallback(() => {
+    const bootstrap = bootstrapRef.current;
+    const dc = dcRef.current;
+    if (!bootstrap?.session_config || dc?.readyState !== "open") return;
+
+    dc.send(
+      JSON.stringify({
+        type: "session.update",
+        session: bootstrap.session_config,
+      }),
+    );
+  }, []);
+
   const executeToolCall = useCallback(
     async (callId: string, name: string, argsRaw: string) => {
       const bootstrap = bootstrapRef.current;
@@ -218,6 +231,13 @@ export function RealtimeWebCallPanel({
       }
     },
     [],
+  );
+
+  const handleFunctionCall = useCallback(
+    (callId: string, name: string, args: string) => {
+      if (callId && name) void executeToolCall(callId, name, args);
+    },
+    [executeToolCall],
   );
 
   const handleRealtimeEvent = useCallback(
@@ -294,13 +314,23 @@ export function RealtimeWebCallPanel({
         return;
       }
 
+      if (type === "response.function_call_arguments.done") {
+        handleFunctionCall(
+          String(msg.call_id ?? ""),
+          String(msg.name ?? ""),
+          String(msg.arguments ?? "{}"),
+        );
+        return;
+      }
+
       if (type === "response.output_item.done") {
         const item = msg.item as Record<string, unknown> | undefined;
         if (item?.type === "function_call") {
-          const callId = String(item.call_id ?? "");
-          const name = String(item.name ?? "");
-          const args = String(item.arguments ?? "{}");
-          if (callId && name) void executeToolCall(callId, name, args);
+          handleFunctionCall(
+            String(item.call_id ?? ""),
+            String(item.name ?? ""),
+            String(item.arguments ?? "{}"),
+          );
         }
         return;
       }
@@ -310,7 +340,7 @@ export function RealtimeWebCallPanel({
         setStatus("listening");
       }
     },
-    [appendTranscript, executeToolCall, sendInitialGreeting],
+    [appendTranscript, handleFunctionCall, sendInitialGreeting],
   );
 
   const teardown = useCallback(() => {
@@ -410,9 +440,9 @@ export function RealtimeWebCallPanel({
       };
 
       dc.onopen = () => {
-        // Session config is applied during SDP signaling; avoid duplicate session.update here.
+        sendSessionUpdate();
 
-        // Fallback: if session.updated never arrives (already configured via SDP), greet after a short delay.
+        // Fallback: if session.updated never arrives, greet after a short delay.
         greetingFallbackTimerRef.current = window.setTimeout(() => {
           greetingFallbackTimerRef.current = null;
           if (!sessionReadyRef.current && activeRef.current) {
@@ -476,7 +506,7 @@ export function RealtimeWebCallPanel({
     } finally {
       setBusy(false);
     }
-  }, [agentId, attachRemoteAudio, busy, handleRealtimeEvent, sendInitialGreeting, teardown]);
+  }, [agentId, attachRemoteAudio, busy, handleRealtimeEvent, sendInitialGreeting, sendSessionUpdate, teardown]);
 
   useEffect(() => {
     return () => {

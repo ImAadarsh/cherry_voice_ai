@@ -1,6 +1,8 @@
 import "server-only";
 import { listAgents } from "@/lib/repositories/agents";
 import { getCherryVoiceSettingsByRestaurant, getCherryVoiceSettingsByToken } from "@/lib/repositories/cherry-voice";
+import { listCategories, listMenuItems } from "@/lib/repositories/menu";
+import { getRestaurant } from "@/lib/repositories/settings";
 import { resolveRestaurantSttLocale } from "@/lib/voice/deepgram-locale";
 import { resolveInworldVoiceIdForRealtime } from "@/lib/voice/inworld-voice-resolve";
 import { normalizePersonalityPreset } from "@/lib/voice/personality";
@@ -35,6 +37,7 @@ export async function resolveNativeAgentOverrides(
   voiceId?: string;
   greeting?: string;
   agentDbId?: number;
+  customPrompt?: string;
   personalityPreset?: ReturnType<typeof normalizePersonalityPreset>;
 }> {
   if (!agentOmnidimId) return {};
@@ -50,6 +53,9 @@ export async function resolveNativeAgentOverrides(
         ? (JSON.parse(String(agent.config)) as Record<string, unknown>)
         : {};
 
+  const customPrompt =
+    typeof config.prompt === "string" && config.prompt.trim() ? config.prompt.trim() : undefined;
+
   return {
     agentDbId: agent.id,
     voiceId: agent.voice_id ? String(agent.voice_id) : undefined,
@@ -57,8 +63,39 @@ export async function resolveNativeAgentOverrides(
       typeof config.welcome_message === "string" && config.welcome_message.trim()
         ? config.welcome_message.trim()
         : undefined,
+    customPrompt,
     personalityPreset: normalizePersonalityPreset(config.personality_preset),
   };
+}
+
+async function buildMenuHint(restaurantId: number): Promise<string | null> {
+  try {
+    const [restaurant, categories, items] = await Promise.all([
+      getRestaurant(restaurantId),
+      listCategories(restaurantId),
+      listMenuItems(restaurantId, { available: true, limit: 500 }),
+    ]);
+    const currency = restaurant?.currency ?? "USD";
+    const categoryNames = categories
+      .slice(0, 8)
+      .map((c) => String((c as { name?: string }).name ?? ""))
+      .filter(Boolean);
+    if (!items.length && !categoryNames.length) return null;
+
+    const categoryText = categoryNames.length
+      ? ` Top categories: ${categoryNames.join(", ")}.`
+      : "";
+    return `Menu hint: ${items.length} items available, prices in ${currency}.${categoryText} Call get_menu for full menu — never guess items or prices.`;
+  } catch {
+    return null;
+  }
+}
+
+async function buildRealtimeInstructions(session: VoiceSessionRecord): Promise<string> {
+  const parts = [await buildVoiceSystemPrompt(session)];
+  const menuHint = await buildMenuHint(session.restaurantId);
+  if (menuHint) parts.push(menuHint);
+  return parts.join("\n\n");
 }
 
 export async function createCherryVoiceRealtimeSession(input: {
@@ -81,6 +118,8 @@ export async function createCherryVoiceRealtimeSession(input: {
     voiceId,
     greeting: overrides.greeting ?? settings.greeting,
     agentId: overrides.agentDbId ?? null,
+    agentCustomPrompt: overrides.customPrompt ?? null,
+    personalityPreset: overrides.personalityPreset,
     processingEarconEnabled: settings.processingEarconEnabled,
     postCallSmsEnabled: settings.postCallSmsEnabled,
     branchId: settings.branchId,
@@ -91,7 +130,7 @@ export async function createCherryVoiceRealtimeSession(input: {
   await initCherryVoiceCallLog(session);
   setSessionState(session, "listening");
 
-  const instructions = await buildVoiceSystemPrompt(session);
+  const instructions = await buildRealtimeInstructions(session);
   const sessionConfig = await buildRealtimeSessionConfig(session, instructions);
   const iceServers = await fetchInworldIceServers();
 
@@ -116,6 +155,15 @@ export async function createCherryVoiceRealtimeWidgetSession(
   }
 
   return createCherryVoiceRealtimeSession({ restaurantId: settings.restaurantId });
+}
+
+export async function rebuildRealtimeSessionConfig(
+  sessionId: string,
+): Promise<RealtimeSessionConfig | null> {
+  const session = getVoiceSession(sessionId);
+  if (!session) return null;
+  const instructions = await buildRealtimeInstructions(session);
+  return buildRealtimeSessionConfig(session, instructions);
 }
 
 export async function endCherryVoiceRealtimeSession(sessionId: string): Promise<void> {

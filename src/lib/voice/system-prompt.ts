@@ -32,12 +32,16 @@ export async function buildVoiceSystemPrompt(session: VoiceSessionRecord, userTe
   ]);
   session.hoursStatus = hours;
 
+  const currency = restaurant?.currency ?? "USD";
   const parts = [
-    `You are the voice assistant for ${restaurant?.name ?? "this restaurant"}.`,
+    `You are the voice assistant for ${restaurant?.name ?? "this restaurant"}. All prices are in ${currency}.`,
     VOICE_STYLE_PROMPT,
     VOICE_INTEGRATION_TOOLS_PROMPT,
     getPersonalityPrompt(session.personalityPreset),
   ];
+  if (session.agentCustomPrompt?.trim()) {
+    parts.push(`## Agent instructions\n${session.agentCustomPrompt.trim().slice(0, 1200)}`);
+  }
   const fest = getFestivalPromptSnippet();
   if (fest) parts.push(fest);
   if (session.branchLabel) parts.push(getBranchRoutingPrompt(session.branchLabel));

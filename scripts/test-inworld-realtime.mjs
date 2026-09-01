@@ -81,7 +81,8 @@ function fullCherrySession() {
   return {
     type: "realtime",
     model: "inworld/models/gemma-4-26b-a4b-it",
-    instructions: "You are the voice assistant for a restaurant. Be helpful and concise.",
+    instructions:
+      "You are the voice assistant for Cheesious Burslem. All prices are in EUR. You MUST call get_menu when the caller asks about the menu — never guess items.",
     output_modalities: ["audio", "text"],
     audio: {
       input: {
@@ -99,6 +100,15 @@ function fullCherrySession() {
         speed: 1.0,
       },
     },
+    tools: [
+      {
+        type: "function",
+        name: "get_menu",
+        description: "Fetch the restaurant menu with categories and items.",
+        parameters: { type: "object", properties: {} },
+      },
+    ],
+    tool_choice: "auto",
     providerData: {
       auto_tool_response: false,
       stt: { voice_profile: true, language_hints: ["en-US"] },
