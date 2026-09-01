@@ -1,7 +1,7 @@
 import "server-only";
 import { env } from "@/lib/env";
 import { getPlatformSetting } from "@/lib/repositories/platform-settings";
-import { getInworldApiKey, getCherryVoiceTtsModel } from "./config";
+import { getInworldApiKey, getCherryVoiceRealtimeTtsModel } from "./config";
 import { CHERRY_VOICE_REALTIME_TOOLS } from "./realtime-tools";
 import type { VoiceSessionRecord } from "./session-store";
 
@@ -55,6 +55,10 @@ export type RealtimeSessionConfig = {
   output_modalities: Array<"audio" | "text">;
   audio: {
     input: {
+      transcription?: {
+        model: string;
+        language?: string;
+      };
       turn_detection: {
         type: "semantic_vad";
         eagerness: "medium";
@@ -84,7 +88,10 @@ export async function buildRealtimeSessionConfig(
   session: VoiceSessionRecord,
   instructions: string,
 ): Promise<RealtimeSessionConfig> {
-  const [model, ttsModel] = await Promise.all([getInworldRealtimeModel(), getCherryVoiceTtsModel()]);
+  const [model, ttsModel] = await Promise.all([
+    getInworldRealtimeModel(),
+    getCherryVoiceRealtimeTtsModel(),
+  ]);
   const locale = session.sttLocale || "en-US";
 
   return {
@@ -94,6 +101,10 @@ export async function buildRealtimeSessionConfig(
     output_modalities: ["audio", "text"],
     audio: {
       input: {
+        transcription: {
+          model: "inworld/inworld-stt-1",
+          language: locale,
+        },
         turn_detection: {
           type: "semantic_vad",
           eagerness: "medium",
@@ -149,6 +160,7 @@ export async function proxyInworldSdpOffer(
 
     if (!res.ok) {
       const text = await res.text().catch(() => "");
+      console.error("[Cherry Voice Realtime] Inworld SDP exchange failed:", res.status, text.slice(0, 500));
       return {
         ok: false,
         error: text.slice(0, 300) || `Inworld SDP exchange failed (${res.status})`,

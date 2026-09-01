@@ -30,6 +30,13 @@ export async function getCherryVoiceTtsModel(): Promise<string> {
   return (env.CHERRY_VOICE_TTS_MODEL || "inworld-tts-2-flash").trim();
 }
 
+/** Realtime WebRTC sessions require inworld-tts-2 for reliable audio output. */
+export async function getCherryVoiceRealtimeTtsModel(): Promise<string> {
+  const fromEnv = (env.CHERRY_VOICE_TTS_MODEL || "").trim();
+  if (fromEnv === "inworld-tts-2" || fromEnv === "inworld-tts-2-flash") return fromEnv;
+  return "inworld-tts-2";
+}
+
 export type CherryVoiceLlmProviderKind = "gemini" | "inworld";
 
 export async function getCherryVoiceLlmProvider(): Promise<CherryVoiceLlmProviderKind> {

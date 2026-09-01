@@ -86,6 +86,7 @@ export async function POST(req: Request) {
 
     const result = await proxyInworldSdpOffer(parsed.data.sdp, sessionConfig);
     if (!result.ok) {
+      console.error("[Cherry Voice Realtime] SDP proxy error:", result.status, result.error);
       return fail(result.error, result.status);
     }
 

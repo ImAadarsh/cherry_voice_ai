@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api-client";
 import { playProcessingEarcon } from "@/lib/voice/client-mic-capture";
-import { sanitizeVoiceError } from "@/lib/voice/user-errors";
+import { sanitizeVoiceError, formatInworldRealtimeError } from "@/lib/voice/user-errors";
 import { cn } from "@/lib/utils";
 
 type RealtimeBootstrap = {
@@ -91,6 +91,55 @@ export function RealtimeWebCallPanel({
   const earconEnabledRef = useRef(false);
   const pendingAgentTextRef = useRef("");
   const toolCallsInFlightRef = useRef(new Set<string>());
+  const sessionReadyRef = useRef(false);
+  const greetingSentRef = useRef(false);
+  const greetingFallbackTimerRef = useRef<number | null>(null);
+
+  const attachRemoteAudio = useCallback((stream: MediaStream) => {
+    if (!audioElRef.current) {
+      const audio = document.createElement("audio");
+      audio.autoplay = true;
+      audio.setAttribute("playsinline", "true");
+      audio.style.display = "none";
+      document.body.appendChild(audio);
+      audioElRef.current = audio;
+    }
+
+    const audio = audioElRef.current;
+    audio.srcObject = stream;
+    void audio.play().catch((err) => {
+      console.warn("[Cherry Voice Realtime] Remote audio autoplay blocked:", err);
+    });
+  }, []);
+
+  const sendInitialGreeting = useCallback(() => {
+    if (greetingSentRef.current || !sessionReadyRef.current) return;
+
+    const bootstrap = bootstrapRef.current;
+    const dc = dcRef.current;
+    if (!bootstrap || dc?.readyState !== "open") return;
+
+    const greeting = bootstrap.greeting?.trim();
+    if (!greeting) return;
+
+    greetingSentRef.current = true;
+    dc.send(
+      JSON.stringify({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: `Greet the customer warmly. Say or paraphrase: "${greeting}"`,
+            },
+          ],
+        },
+      }),
+    );
+    dc.send(JSON.stringify({ type: "response.create" }));
+  }, []);
 
   const appendTranscript = useCallback((role: "user" | "agent", text: string) => {
     const trimmed = text.trim();
@@ -176,9 +225,21 @@ export function RealtimeWebCallPanel({
       const type = String(msg.type ?? "");
 
       if (type === "error") {
-        const errObj = msg.error as { message?: string } | undefined;
-        const friendly = sanitizeVoiceError(errObj?.message);
+        const errObj = msg.error as
+          | { type?: string; code?: string; message?: string; param?: string; event_id?: string }
+          | undefined;
+        const friendly = formatInworldRealtimeError(errObj);
         if (friendly) setVoiceNotice(friendly);
+        return;
+      }
+
+      if (type === "session.created" || type === "session.updated") {
+        sessionReadyRef.current = true;
+        sendInitialGreeting();
+        if (activeRef.current) {
+          statusRef.current = "listening";
+          setStatus("listening");
+        }
         return;
       }
 
@@ -207,8 +268,21 @@ export function RealtimeWebCallPanel({
         return;
       }
 
+      if (type === "response.output_audio_transcript.delta") {
+        const delta = String(msg.delta ?? "");
+        pendingAgentTextRef.current += delta;
+        return;
+      }
+
       if (type === "response.output_text.done") {
         const text = String(msg.text ?? pendingAgentTextRef.current);
+        pendingAgentTextRef.current = "";
+        if (text.trim()) appendTranscript("agent", text);
+        return;
+      }
+
+      if (type === "response.output_audio_transcript.done") {
+        const text = String(msg.transcript ?? pendingAgentTextRef.current);
         pendingAgentTextRef.current = "";
         if (text.trim()) appendTranscript("agent", text);
         return;
@@ -236,10 +310,14 @@ export function RealtimeWebCallPanel({
         setStatus("listening");
       }
     },
-    [appendTranscript, executeToolCall],
+    [appendTranscript, executeToolCall, sendInitialGreeting],
   );
 
   const teardown = useCallback(() => {
+    if (greetingFallbackTimerRef.current) {
+      clearTimeout(greetingFallbackTimerRef.current);
+      greetingFallbackTimerRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((t) => t.stop());
       streamRef.current = null;
@@ -289,6 +367,8 @@ export function RealtimeWebCallPanel({
     setTranscript([]);
     setNetworkWarning(null);
     closingRef.current = false;
+    sessionReadyRef.current = false;
+    greetingSentRef.current = false;
     statusRef.current = "connecting";
     setStatus("connecting");
 
@@ -314,13 +394,12 @@ export function RealtimeWebCallPanel({
 
       stream.getAudioTracks().forEach((track) => pc.addTrack(track, stream));
 
-      pc.ontrack = (e) => {
-        if (audioElRef.current) audioElRef.current.remove();
-        const audio = document.createElement("audio");
-        audio.autoplay = true;
-        audio.srcObject = new MediaStream([e.track]);
-        document.body.appendChild(audio);
-        audioElRef.current = audio;
+      pc.ontrack = (event) => {
+        const remoteStream = event.streams[0] ?? new MediaStream([event.track]);
+        attachRemoteAudio(remoteStream);
+        event.track.onunmute = () => {
+          if (audioElRef.current) void audioElRef.current.play().catch(() => {});
+        };
       };
 
       pc.onconnectionstatechange = () => {
@@ -338,28 +417,16 @@ export function RealtimeWebCallPanel({
           }),
         );
 
-        const greeting = bootstrap.greeting?.trim();
-        if (greeting) {
-          dc.send(
-            JSON.stringify({
-              type: "conversation.item.create",
-              item: {
-                type: "message",
-                role: "user",
-                content: [
-                  {
-                    type: "input_text",
-                    text: `Greet the customer warmly. Say or paraphrase: "${greeting}"`,
-                  },
-                ],
-              },
-            }),
-          );
-          dc.send(JSON.stringify({ type: "response.create" }));
-        }
-
-        statusRef.current = "listening";
-        setStatus("listening");
+        // Fallback: if session.updated never arrives (already configured via SDP), greet after a short delay.
+        greetingFallbackTimerRef.current = window.setTimeout(() => {
+          greetingFallbackTimerRef.current = null;
+          if (!sessionReadyRef.current && activeRef.current) {
+            sessionReadyRef.current = true;
+            sendInitialGreeting();
+            statusRef.current = "listening";
+            setStatus("listening");
+          }
+        }, 1500);
       };
 
       dc.onmessage = (e) => {
@@ -387,9 +454,9 @@ export function RealtimeWebCallPanel({
 
       if (!sdpRes.ok) {
         const errBody = await sdpRes.json().catch(() => ({}));
-        throw new Error(
-          (errBody as { error?: string }).error ?? `WebRTC signaling failed (${sdpRes.status})`,
-        );
+        const errMsg = (errBody as { error?: string }).error ?? `WebRTC signaling failed (${sdpRes.status})`;
+        console.error("[Cherry Voice Realtime] SDP proxy failed:", sdpRes.status, errMsg);
+        throw new Error(errMsg);
       }
 
       const answerSdp = await sdpRes.text();
@@ -409,7 +476,7 @@ export function RealtimeWebCallPanel({
     } finally {
       setBusy(false);
     }
-  }, [agentId, busy, handleRealtimeEvent, teardown]);
+  }, [agentId, attachRemoteAudio, busy, handleRealtimeEvent, sendInitialGreeting, teardown]);
 
   useEffect(() => {
     return () => {

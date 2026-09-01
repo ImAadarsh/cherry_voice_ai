@@ -1,5 +1,47 @@
 /** Map raw provider errors to a single user-friendly message (no stack traces). */
 
+export type InworldRealtimeError = {
+  type?: string;
+  code?: string;
+  message?: string;
+  param?: string;
+  event_id?: string;
+};
+
+const INWORLD_PARAM_MESSAGES: Record<string, string> = {
+  "session.audio.output.model": "Voice playback model is misconfigured. Contact your administrator.",
+  "session.audio.output.voice": "The selected voice is unavailable. Try another agent voice.",
+  "session.model": "Voice AI model is misconfigured. Contact your administrator.",
+  "session.audio.input.transcription.model": "Speech recognition model is misconfigured. Contact your administrator.",
+};
+
+/** Log full Inworld Realtime error and return a concise user-facing message. */
+export function formatInworldRealtimeError(error: InworldRealtimeError | undefined): string {
+  if (!error) return "Something went wrong with the voice call. Please try again.";
+
+  console.error("[Cherry Voice Realtime] Inworld error:", {
+    type: error.type,
+    code: error.code,
+    param: error.param,
+    message: error.message,
+    event_id: error.event_id,
+  });
+
+  if (error.param && INWORLD_PARAM_MESSAGES[error.param]) {
+    return INWORLD_PARAM_MESSAGES[error.param];
+  }
+
+  if (error.code === "invalid_value" && error.param) {
+    return `Voice AI configuration issue (${error.param}). Contact your administrator.`;
+  }
+
+  if (error.type === "invalid_request_error") {
+    return sanitizeVoiceError(error.message) || "Voice AI rejected the request. Please end the call and try again.";
+  }
+
+  return sanitizeVoiceError(error.message);
+}
+
 const PATTERNS: Array<{ test: RegExp; message: string }> = [
   { test: /thought_signature|thoughtSignature/i, message: "Voice AI had a brief hiccup. Please try again." },
   { test: /GoogleGenerativeAI|generativelanguage\.googleapis/i, message: "Voice AI is temporarily unavailable. Please try again in a moment." },
