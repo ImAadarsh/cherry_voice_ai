@@ -15,6 +15,13 @@ const INWORLD_PARAM_MESSAGES: Record<string, string> = {
   "session.audio.input.transcription.model": "Speech recognition model is misconfigured. Contact your administrator.",
 };
 
+function shortenInworldMessage(message: string | undefined): string {
+  const raw = (message ?? "").trim();
+  if (!raw) return "";
+  const firstLine = raw.split("\n")[0]?.trim() ?? raw;
+  return firstLine.length > 220 ? `${firstLine.slice(0, 217)}…` : firstLine;
+}
+
 /** Log full Inworld Realtime error and return a concise user-facing message. */
 export function formatInworldRealtimeError(error: InworldRealtimeError | undefined): string {
   if (!error) return "Something went wrong with the voice call. Please try again.";
@@ -27,19 +34,28 @@ export function formatInworldRealtimeError(error: InworldRealtimeError | undefin
     event_id: error.event_id,
   });
 
+  const detail = shortenInworldMessage(error.message);
+
   if (error.param && INWORLD_PARAM_MESSAGES[error.param]) {
-    return INWORLD_PARAM_MESSAGES[error.param];
+    return detail ? `${INWORLD_PARAM_MESSAGES[error.param]} (${detail})` : INWORLD_PARAM_MESSAGES[error.param];
   }
 
   if (error.code === "invalid_value" && error.param) {
-    return `Voice AI configuration issue (${error.param}). Contact your administrator.`;
+    return detail
+      ? `Voice AI configuration issue (${error.param}): ${detail}`
+      : `Voice AI configuration issue (${error.param}). Contact your administrator.`;
+  }
+
+  const prefix = [error.code, error.param].filter(Boolean).join(" · ");
+  if (detail) {
+    return prefix ? `${prefix}: ${detail}` : detail;
   }
 
   if (error.type === "invalid_request_error") {
-    return sanitizeVoiceError(error.message) || "Voice AI rejected the request. Please end the call and try again.";
+    return "Voice AI rejected the request. Please end the call and try again.";
   }
 
-  return sanitizeVoiceError(error.message);
+  return "Something went wrong with the voice call. Please try again.";
 }
 
 const PATTERNS: Array<{ test: RegExp; message: string }> = [

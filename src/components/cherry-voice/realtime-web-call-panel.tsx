@@ -410,12 +410,7 @@ export function RealtimeWebCallPanel({
       };
 
       dc.onopen = () => {
-        dc.send(
-          JSON.stringify({
-            type: "session.update",
-            session: bootstrap.session_config,
-          }),
-        );
+        // Session config is applied during SDP signaling; avoid duplicate session.update here.
 
         // Fallback: if session.updated never arrives (already configured via SDP), greet after a short delay.
         greetingFallbackTimerRef.current = window.setTimeout(() => {
@@ -454,8 +449,13 @@ export function RealtimeWebCallPanel({
 
       if (!sdpRes.ok) {
         const errBody = await sdpRes.json().catch(() => ({}));
-        const errMsg = (errBody as { error?: string }).error ?? `WebRTC signaling failed (${sdpRes.status})`;
-        console.error("[Cherry Voice Realtime] SDP proxy failed:", sdpRes.status, errMsg);
+        const errMsg =
+          (errBody as { error?: string }).error ??
+          (typeof (errBody as { message?: string }).message === "string"
+            ? (errBody as { message: string }).message
+            : null) ??
+          `WebRTC signaling failed (${sdpRes.status})`;
+        console.error("[Cherry Voice Realtime] SDP proxy failed:", sdpRes.status, errBody);
         throw new Error(errMsg);
       }
 

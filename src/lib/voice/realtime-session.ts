@@ -2,7 +2,7 @@ import "server-only";
 import { listAgents } from "@/lib/repositories/agents";
 import { getCherryVoiceSettingsByRestaurant, getCherryVoiceSettingsByToken } from "@/lib/repositories/cherry-voice";
 import { resolveRestaurantSttLocale } from "@/lib/voice/deepgram-locale";
-import { resolveInworldVoiceId } from "@/lib/voice/inworld-voices";
+import { resolveInworldVoiceIdForRealtime } from "@/lib/voice/inworld-voice-resolve";
 import { normalizePersonalityPreset } from "@/lib/voice/personality";
 import { buildVoiceSystemPrompt } from "@/lib/voice/system-prompt";
 import { initCherryVoiceCallLog, finalizeCherryVoiceCallLog } from "./call-log";
@@ -74,9 +74,11 @@ export async function createCherryVoiceRealtimeSession(input: {
   const sttLocale = await resolveRestaurantSttLocale(settings.restaurantId);
   const branchLabel = settings.branchId ? `Branch #${settings.branchId}` : null;
 
+  const voiceId = await resolveInworldVoiceIdForRealtime(overrides.voiceId ?? settings.inworldVoiceId);
+
   const session = createVoiceSession({
     restaurantId: settings.restaurantId,
-    voiceId: resolveInworldVoiceId(overrides.voiceId ?? settings.inworldVoiceId),
+    voiceId,
     greeting: overrides.greeting ?? settings.greeting,
     agentId: overrides.agentDbId ?? null,
     processingEarconEnabled: settings.processingEarconEnabled,

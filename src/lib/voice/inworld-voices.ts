@@ -24,6 +24,15 @@ export function isValidInworldVoice(voiceId: string): boolean {
   return trimmed.length > 0 && trimmed.length <= 200;
 }
 
+/** Known-good voice ids for sync validation (static catalog + common Realtime voices). */
+export function isKnownInworldVoice(voiceId: string): boolean {
+  const trimmed = voiceId.trim();
+  if (!isValidInworldVoice(trimmed)) return false;
+  if (INWORLD_VOICES.some((v) => v.id === trimmed)) return true;
+  const extras = ["Clive", "Ash", "Ashley", "Dennis", "Mark", "Edward", "Olivia", "Elizabeth", "Theodore"];
+  return extras.includes(trimmed);
+}
+
 /** Normalize voice id before session start; falls back to default when missing or invalid. */
 export function resolveInworldVoiceId(voiceId: string | null | undefined): string {
   const trimmed = (voiceId ?? "").trim();

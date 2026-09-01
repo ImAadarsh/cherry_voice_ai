@@ -20,8 +20,7 @@ export async function getInworldRealtimeModel(): Promise<string> {
   return (
     fromDb?.trim() ||
     env.INWORLD_REALTIME_MODEL ||
-    env.INWORLD_ROUTER_MODEL ||
-    "inworld/models/gemma-4-26b-a4b-it"
+    "openai/gpt-4o-mini"
   ).trim();
 }
 
