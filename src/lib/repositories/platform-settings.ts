@@ -15,6 +15,7 @@ export type PlatformSettingKey =
   | "cherry_voice_llm_provider"
   | "inworld_router_model"
   | "cherry_voice_mode"
+  | "cherry_voice_realtime_tools"
   | "inworld_realtime_model";
 
 const SECRET_KEYS = new Set<PlatformSettingKey>([

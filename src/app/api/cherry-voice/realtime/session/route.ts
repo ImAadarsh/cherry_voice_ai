@@ -5,7 +5,7 @@ import { requireRestaurantId } from "@/lib/route-auth";
 import { env } from "@/lib/env";
 import { checkRateLimit, getClientIp } from "@/lib/rate-limit";
 import { getCherryVoiceSettingsByRestaurant } from "@/lib/repositories/cherry-voice";
-import { isCherryVoiceRealtimeConfigured } from "@/lib/voice/config";
+import { isCherryVoiceRealtimeConfigured, getCherryVoiceRealtimeToolsEnabled } from "@/lib/voice/config";
 import {
   createCherryVoiceRealtimeSession,
   createCherryVoiceRealtimeWidgetSession,
@@ -78,9 +78,12 @@ export async function POST(req: Request) {
 
     const { session, sessionConfig, iceServers, callsUrl, greeting } = bootstrap;
 
+    const toolsEnabled = await getCherryVoiceRealtimeToolsEnabled();
+
     const payload = {
       session_id: session.id,
       mode: "inworld_realtime" as const,
+      tools_enabled: toolsEnabled,
       restaurant: restaurantMeta,
       ice_servers: iceServers,
       calls_url: callsUrl,

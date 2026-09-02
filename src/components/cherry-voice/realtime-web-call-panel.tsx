@@ -14,7 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { api } from "@/lib/api-client";
 import { playProcessingEarcon } from "@/lib/voice/client-mic-capture";
-import { sanitizeVoiceError, formatInworldRealtimeError } from "@/lib/voice/user-errors";
+import { sanitizeVoiceError, formatInworldRealtimeError, isInworldToolRestrictionError } from "@/lib/voice/user-errors";
 import { cn } from "@/lib/utils";
 
 type RealtimeBootstrap = {
@@ -94,6 +94,7 @@ export function RealtimeWebCallPanel({
   const sessionReadyRef = useRef(false);
   const greetingSentRef = useRef(false);
   const greetingFallbackTimerRef = useRef<number | null>(null);
+  const toolsStrippedRef = useRef(false);
 
   const attachRemoteAudio = useCallback((stream: MediaStream) => {
     if (!audioElRef.current) {
@@ -159,6 +160,26 @@ export function RealtimeWebCallPanel({
         })
         .catch(() => {});
     }
+  }, []);
+
+  const stripToolsAndRetry = useCallback(() => {
+    if (toolsStrippedRef.current) return;
+    toolsStrippedRef.current = true;
+
+    const bootstrap = bootstrapRef.current;
+    const dc = dcRef.current;
+    if (!bootstrap?.session_config || dc?.readyState !== "open") return;
+
+    const session = { ...bootstrap.session_config };
+    delete session.tools;
+    delete session.tool_choice;
+    bootstrap.session_config = session;
+
+    greetingSentRef.current = false;
+    dc.send(JSON.stringify({ type: "session.update", session }));
+    setVoiceNotice(
+      "Voice is active without menu/order tools — enable Inworld billing to restore full agent actions.",
+    );
   }, []);
 
   const sendSessionUpdate = useCallback(() => {
@@ -248,6 +269,10 @@ export function RealtimeWebCallPanel({
         const errObj = msg.error as
           | { type?: string; code?: string; message?: string; param?: string; event_id?: string }
           | undefined;
+        if (isInworldToolRestrictionError(errObj)) {
+          stripToolsAndRetry();
+          return;
+        }
         const friendly = formatInworldRealtimeError(errObj);
         if (friendly) setVoiceNotice(friendly);
         return;
@@ -340,7 +365,7 @@ export function RealtimeWebCallPanel({
         setStatus("listening");
       }
     },
-    [appendTranscript, handleFunctionCall, sendInitialGreeting],
+    [appendTranscript, handleFunctionCall, sendInitialGreeting, stripToolsAndRetry],
   );
 
   const teardown = useCallback(() => {
@@ -399,6 +424,7 @@ export function RealtimeWebCallPanel({
     closingRef.current = false;
     sessionReadyRef.current = false;
     greetingSentRef.current = false;
+    toolsStrippedRef.current = false;
     statusRef.current = "connecting";
     setStatus("connecting");
 

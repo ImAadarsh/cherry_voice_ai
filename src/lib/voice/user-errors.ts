@@ -22,9 +22,19 @@ function shortenInworldMessage(message: string | undefined): string {
   return firstLine.length > 220 ? `${firstLine.slice(0, 217)}…` : firstLine;
 }
 
+/** Inworld rejects tool registration when billing/plan does not include tool calling. */
+export function isInworldToolRestrictionError(error: InworldRealtimeError | undefined): boolean {
+  const msg = (error?.message ?? "").toLowerCase();
+  return msg.includes("tool calling") && msg.includes("restricted");
+}
+
 /** Log full Inworld Realtime error and return a concise user-facing message. */
 export function formatInworldRealtimeError(error: InworldRealtimeError | undefined): string {
   if (!error) return "Something went wrong with the voice call. Please try again.";
+
+  if (isInworldToolRestrictionError(error)) {
+    return "Voice works, but menu/order tools need Inworld billing enabled. Add a payment method in the Inworld portal, or set CHERRY_VOICE_REALTIME_TOOLS=false for voice-only calls.";
+  }
 
   console.error("[Cherry Voice Realtime] Inworld error:", {
     type: error.type,

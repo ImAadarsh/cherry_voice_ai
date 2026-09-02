@@ -59,6 +59,17 @@ export async function getCherryVoiceMode(): Promise<"inworld_realtime" | "pipeli
   return resolveMode();
 }
 
+/** Whether Realtime sessions should register Cherry Voice tenant tools (menu, orders, etc.). */
+export async function getCherryVoiceRealtimeToolsEnabled(): Promise<boolean> {
+  const fromDb = await getPlatformSetting<string>("cherry_voice_realtime_tools");
+  if (fromDb?.trim()) {
+    const raw = fromDb.trim().toLowerCase();
+    if (raw === "false" || raw === "0" || raw === "off") return false;
+    if (raw === "true" || raw === "1" || raw === "on") return true;
+  }
+  return env.CHERRY_VOICE_REALTIME_TOOLS;
+}
+
 /** Realtime mode only needs Inworld API key (unified STT+LLM+TTS). */
 export async function isCherryVoiceRealtimeConfigured(): Promise<boolean> {
   const iw = await getInworldApiKey();

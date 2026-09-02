@@ -1,7 +1,7 @@
 import "server-only";
 import { env } from "@/lib/env";
 import { getPlatformSetting } from "@/lib/repositories/platform-settings";
-import { getInworldApiKey, getCherryVoiceRealtimeTtsModel } from "./config";
+import { getInworldApiKey, getCherryVoiceRealtimeTtsModel, getCherryVoiceRealtimeToolsEnabled } from "./config";
 import { CHERRY_VOICE_REALTIME_TOOLS } from "./realtime-tools";
 import type { VoiceSessionRecord } from "./session-store";
 
@@ -71,8 +71,8 @@ export type RealtimeSessionConfig = {
       speed: number;
     };
   };
-  tools: typeof CHERRY_VOICE_REALTIME_TOOLS;
-  tool_choice: "auto";
+  tools?: typeof CHERRY_VOICE_REALTIME_TOOLS;
+  tool_choice?: "auto";
   providerData: {
     auto_tool_response: boolean;
     stt: {
@@ -88,13 +88,14 @@ export async function buildRealtimeSessionConfig(
   session: VoiceSessionRecord,
   instructions: string,
 ): Promise<RealtimeSessionConfig> {
-  const [model, ttsModel] = await Promise.all([
+  const [model, ttsModel, toolsEnabled] = await Promise.all([
     getInworldRealtimeModel(),
     getCherryVoiceRealtimeTtsModel(),
+    getCherryVoiceRealtimeToolsEnabled(),
   ]);
   const locale = session.sttLocale || "en-US";
 
-  return {
+  const config: RealtimeSessionConfig = {
     type: "realtime",
     model,
     instructions,
@@ -118,8 +119,6 @@ export async function buildRealtimeSessionConfig(
         speed: 1.0,
       },
     },
-    tools: CHERRY_VOICE_REALTIME_TOOLS,
-    tool_choice: "auto",
     providerData: {
       auto_tool_response: false,
       stt: {
@@ -130,6 +129,13 @@ export async function buildRealtimeSessionConfig(
       responsiveness: { enabled: true },
     },
   };
+
+  if (toolsEnabled) {
+    config.tools = CHERRY_VOICE_REALTIME_TOOLS;
+    config.tool_choice = "auto";
+  }
+
+  return config;
 }
 
 export async function proxyInworldSdpOffer(
